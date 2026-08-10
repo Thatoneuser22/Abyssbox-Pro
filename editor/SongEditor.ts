@@ -16,6 +16,7 @@ import { SetThemePrompt } from "./SongThemePrompt"
 import { EuclideanRhythmPrompt } from "./EuclidgenRhythmPrompt";
 import "./Layout"; // Imported here for the sake of ensuring this code is transpiled early.
 import { Instrument, Channel, Synth, clamp } from "../synth/synth";
+import { SoundFontData, SoundFontLibrary } from "../synth/SoundFont";
 import { HTML, SVG } from "imperative-html/dist/esm/elements-strict";
 import { Preferences } from "./Preferences";
 import { HarmonicsEditor, HarmonicsEditorPrompt } from "./HarmonicsEditor";
@@ -54,6 +55,7 @@ import {oscilascopeCanvas} from "../global/Oscilascope";
 import { VisualLoopControlsPrompt } from "./VisualLoopControlsPrompt";
 import { SampleLoadingStatusPrompt } from "./SampleLoadingStatusPrompt";
 import { AddSamplesPrompt } from "./AddSamplesPrompt";
+import { SoundFontPrompt } from "./SoundFontPrompt";
 import { ShortenerConfigPrompt } from "./ShortenerConfigPrompt";
 import { FontPrompt } from "./CustomFontPrompt";
 
@@ -103,6 +105,7 @@ function buildPresetOptions(isNoise: boolean, idSet: string): HTMLSelectElement 
         menu.appendChild(option({ value: InstrumentType.supersaw}, EditorConfig.valueToPreset(InstrumentType.supersaw)!.name));      
         menu.appendChild(option({ value: InstrumentType.harmonics }, EditorConfig.valueToPreset(InstrumentType.harmonics)!.name));
         menu.appendChild(option({ value: InstrumentType.pickedString }, EditorConfig.valueToPreset(InstrumentType.pickedString)!.name));
+        menu.appendChild(option({ value: InstrumentType.soundfont }, EditorConfig.instrumentToPreset(InstrumentType.soundfont)!.name));
         menu.appendChild(option({ value: InstrumentType.spectrum }, EditorConfig.valueToPreset(InstrumentType.spectrum)!.name));
         menu.appendChild(option({ value: InstrumentType.noise }, EditorConfig.valueToPreset(InstrumentType.noise)!.name));
     }
@@ -1344,6 +1347,32 @@ export class SongEditor {
         ),
     );
 
+    private readonly _soundFontFileInput: HTMLInputElement = input({ type: "file", accept: ".sf2,audio/sf2", style: "display: none;" });
+    private readonly _soundFontLoadButton: HTMLButtonElement = button({ type: "button", style: "width: 50%; font-size: x-small;" }, "Load .SF2");
+    private readonly _soundFontUrlButton: HTMLButtonElement = button({ type: "button", class: "last-button", style: "width: 50%; font-size: x-small;" }, "From URL");
+    private readonly _soundFontName: HTMLSpanElement = span({ style: `font-size: x-small; color: ${ColorConfig.secondaryText}; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;` }, "No SoundFont loaded");
+    private readonly _soundFontBankSelect: HTMLSelectElement = select();
+    private readonly _soundFontPresetSelect: HTMLSelectElement = select();
+    private readonly _soundFontGroup: HTMLDivElement = div({ class: "editor-controls", style: "display: none;" },
+        div({ class: "selectRow" },
+            span({ class: "tip" }, "SoundFont:"),
+            div({ class: "instrument-bar" }, this._soundFontLoadButton, this._soundFontUrlButton),
+            this._soundFontFileInput,
+        ),
+        div({ class: "selectRow" },
+            span({ class: "tip" }, "File:"),
+            this._soundFontName,
+        ),
+        div({ class: "selectRow" },
+            span({ class: "tip" }, "Bank:"),
+            div({ class: "selectContainer" }, this._soundFontBankSelect),
+        ),
+        div({ class: "selectRow" },
+            span({ class: "tip" }, "Preset:"),
+            div({ class: "selectContainer" }, this._soundFontPresetSelect),
+        ),
+    );
+
     private selectedPatternCounter: HTMLDivElement = div({style:"margin:5px; pointer-events: none;"},this._doc.selection.boxSelectionWidth*this._doc.selection.boxSelectionHeight);
     private selectedPatternDiv: HTMLDivElement = div({style:"background: var(--ui-widget-background); font-weight: bold; border-radius: 5px; height: 32px; position: absolute; font-size: 20px; text-align: center; align-content: center;", title:"The total number of patterns you have selected in the track editor."}, this.selectedPatternCounter);
 
@@ -1370,6 +1399,7 @@ export class SongEditor {
         // this._instrumentCopyGroup,
         // this._instrumentExportGroup,
         this._instrumentTypeSelectRow,
+        this._soundFontGroup,
         this._instrumentVolumeSliderRow,
         //this._customizeInstrumentButton,
         this._customInstrumentSettingsGroup,
@@ -1764,6 +1794,11 @@ export class SongEditor {
         this._keySelect.addEventListener("change", this._whenSetKey);
         this._octaveStepper.addEventListener("change", this._whenSetOctave);
         this._rhythmSelect.addEventListener("change", this._whenSetRhythm);
+        this._soundFontLoadButton.addEventListener("click", this._whenOpenSoundFontFile);
+        this._soundFontUrlButton.addEventListener("click", this._whenOpenSoundFontUrl);
+        this._soundFontFileInput.addEventListener("change", this._whenLoadSoundFontFile);
+        this._soundFontBankSelect.addEventListener("change", this._whenSetSoundFontBank);
+        this._soundFontPresetSelect.addEventListener("change", this._whenSetSoundFontPreset);
         //this._pitchedPresetSelect.addEventListener("change", this._whenSetPitchedPreset);
         //this._drumPresetSelect.addEventListener("change", this._whenSetDrumPreset);
         this._algorithmSelect.addEventListener("change", this._whenSetAlgorithm);
@@ -2433,6 +2468,9 @@ export class SongEditor {
 		case "addExternal":
                         this.prompt = new AddSamplesPrompt(this._doc);
                         break;
+                case "soundFontURL":
+                    this.prompt = new SoundFontPrompt(this._doc);
+                    break;
         case "songTheme":
             this.prompt = new SetThemePrompt(this._doc);
             break;
@@ -3099,6 +3137,18 @@ export class SongEditor {
                 setSelectedValue(this._pitchedPresetSelect, instrument.preset, true);
             }
 
+            const isSoundFont: boolean = instrument.type == InstrumentType.soundfont;
+            this._soundFontGroup.style.display = isSoundFont ? "" : "none";
+            if (isSoundFont) {
+                this._soundFontName.textContent = instrument.soundFontName != "" ? instrument.soundFontName : "No SoundFont loaded";
+                const soundFont = SoundFontLibrary.get(instrument.soundFontUrl);
+                if (soundFont != null) {
+                    this._populateSoundFontMenus(soundFont, instrument);
+                } else {
+                    this._setSoundFontMenusLoading(instrument.soundFontUrl != "" ? "SoundFont not loaded" : "Load a SoundFont");
+                }
+            }
+
             if (instrument.type == InstrumentType.noise) {
                 this._chipWaveSelectRow.style.display = "none";
 		    						// advloop addition
@@ -3178,8 +3228,12 @@ export class SongEditor {
                 }
             } else {
                 this._drumsetGroup.style.display = "none";
-                this._fadeInOutRow.style.display = "";
-                this._fadeInOutEditor.render();
+                if (instrument.type == InstrumentType.soundfont) {
+                    this._fadeInOutRow.style.display = "none";
+                } else {
+                    this._fadeInOutRow.style.display = "";
+                    this._fadeInOutEditor.render();
+                }
             }
 
             if (instrument.type == InstrumentType.chip) {
@@ -3459,6 +3513,11 @@ export class SongEditor {
                 this._effectDiv.style.display = "";
                 this._envelopeDiv.style.display = "";
                 this._instOptionsDiv.style.display = "none";
+            }
+
+            if (instrument.type == InstrumentType.soundfont) {
+                this._fadeInOutRow.style.display = "none";
+                this._envelopeDiv.style.display = "none";
             }
 
             if (effectsIncludeDistortion(instrument.effects)) {
@@ -4281,6 +4340,7 @@ export class SongEditor {
             this._panDropdownGroup.style.display = "none";
             this._instrumentVolumeSliderRow.style.display = "none";
             this._instrumentTypeSelectRow.style.setProperty("display", "none");
+            this._soundFontGroup.style.display = "none";
 
             this._instrumentSettingsGroup.style.color = ColorConfig.getChannelColor(this._doc.song, this._doc.channel).primaryNote;
 
@@ -5877,6 +5937,131 @@ export class SongEditor {
 
     private _whenSetModFilter = (mod: number): void => {
         this._doc.selection.setModFilter(mod, this._modFilterBoxes[mod].selectedIndex);
+    }
+
+    private _getCurrentSoundFontInstrument = (): Instrument => {
+        return this._doc.song.channels[this._doc.channel].instruments[this._doc.getCurrentInstrument()];
+    }
+
+    private _clearSoundFontSelect = (menu: HTMLSelectElement): void => {
+        while (menu.firstChild != null) menu.removeChild(menu.firstChild);
+    }
+
+    private _setSoundFontMenusLoading = (label: string): void => {
+        this._clearSoundFontSelect(this._soundFontBankSelect);
+        this._clearSoundFontSelect(this._soundFontPresetSelect);
+        this._soundFontBankSelect.appendChild(option({ value: "" }, label));
+        this._soundFontPresetSelect.appendChild(option({ value: "" }, label));
+        this._soundFontBankSelect.disabled = true;
+        this._soundFontPresetSelect.disabled = true;
+    }
+
+    private _populateSoundFontPresetMenu = (font: SoundFontData, instrument: Instrument): void => {
+        this._clearSoundFontSelect(this._soundFontPresetSelect);
+
+        const presets = font.getPresetInfos().filter(preset => preset.bank == instrument.soundFontBank);
+        if (presets.length == 0) {
+            this._soundFontPresetSelect.appendChild(option({ value: "" }, "No presets"));
+            this._soundFontPresetSelect.disabled = true;
+            return;
+        }
+
+        if (!presets.some(preset => preset.preset == instrument.soundFontPreset)) {
+            instrument.soundFontPreset = presets[0].preset;
+        }
+
+        for (const preset of presets) {
+            this._soundFontPresetSelect.appendChild(option({ value: preset.preset }, preset.name));
+        }
+
+        this._soundFontPresetSelect.disabled = false;
+        this._soundFontPresetSelect.value = instrument.soundFontPreset + "";
+    }
+
+    private _populateSoundFontMenus = (font: SoundFontData, instrument: Instrument): void => {
+        const infos = font.getPresetInfos();
+        const banks: number[] = [];
+        for (const preset of infos) {
+            if (banks.indexOf(preset.bank) == -1) banks.push(preset.bank);
+        }
+
+        this._clearSoundFontSelect(this._soundFontBankSelect);
+        if (banks.length == 0) {
+            this._setSoundFontMenusLoading("No presets");
+            return;
+        }
+
+        if (banks.indexOf(instrument.soundFontBank) == -1) {
+            instrument.soundFontBank = banks[0];
+        }
+
+        for (const bank of banks) {
+            this._soundFontBankSelect.appendChild(option({ value: bank }, "Bank " + bank));
+        }
+
+        this._soundFontBankSelect.disabled = false;
+        this._soundFontBankSelect.value = instrument.soundFontBank + "";
+        this._populateSoundFontPresetMenu(font, instrument);
+    }
+
+    private _useLoadedSoundFont = (font: SoundFontData, id: string, name: string): void => {
+        const instrument = this._getCurrentSoundFontInstrument();
+        const firstPreset = font.getPresetInfos()[0];
+
+        instrument.soundFontUrl = id;
+        instrument.soundFontName = name;
+        instrument.soundFontBank = firstPreset.bank;
+        instrument.soundFontPreset = firstPreset.preset;
+
+        this._soundFontName.textContent = name;
+        this._populateSoundFontMenus(font, instrument);
+        this._doc.notifier.changed();
+    }
+
+    private _whenOpenSoundFontFile = (): void => {
+        this._soundFontFileInput.click();
+    }
+
+    private _whenLoadSoundFontFile = async (): Promise<void> => {
+        const file = this._soundFontFileInput.files != null ? this._soundFontFileInput.files[0] : null;
+        if (file == null) return;
+
+        this._setSoundFontMenusLoading("Loading...");
+        this._soundFontName.textContent = "Loading " + file.name + "...";
+
+        try {
+            const id = URL.createObjectURL(file);
+            const buffer = await file.arrayBuffer();
+            const font = SoundFontLibrary.loadFromArrayBuffer(id, file.name, buffer);
+            this._useLoadedSoundFont(font, id, file.name);
+        } catch (error) {
+            this._soundFontName.textContent = error instanceof Error ? error.message : "Could not load SoundFont";
+            this._setSoundFontMenusLoading("Load failed");
+        } finally {
+            this._soundFontFileInput.value = "";
+        }
+    }
+
+    private _whenOpenSoundFontUrl = (): void => {
+        this._openPrompt("soundFontURL");
+    }
+
+    private _whenSetSoundFontBank = (): void => {
+        const instrument = this._getCurrentSoundFontInstrument();
+        const font = SoundFontLibrary.get(instrument.soundFontUrl);
+        if (font == null || this._soundFontBankSelect.value == "") return;
+
+        instrument.soundFontBank = Math.max(0, parseInt(this._soundFontBankSelect.value) | 0);
+        this._populateSoundFontPresetMenu(font, instrument);
+        this._doc.notifier.changed();
+    }
+
+    private _whenSetSoundFontPreset = (): void => {
+        const instrument = this._getCurrentSoundFontInstrument();
+        if (this._soundFontPresetSelect.value == "") return;
+
+        instrument.soundFontPreset = Math.max(0, parseInt(this._soundFontPresetSelect.value) | 0);
+        this._doc.notifier.changed();
     }
 
     private _whenSetChipWave = (): void => {

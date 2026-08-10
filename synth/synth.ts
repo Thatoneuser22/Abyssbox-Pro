@@ -6,6 +6,7 @@ import { scaleElementsByFactor, inverseRealFourierTransform } from "./FFT";
 import { Deque } from "./Deque";
 import { events } from "../global/Events";
 import { FilterCoefficients, FrequencyResponse, DynamicBiquadFilter, warpInfinityToNyquist } from "./filtering";
+import { SoundFontLibrary, SoundFontZone } from "./SoundFont";
 
 
 declare global {
@@ -1653,6 +1654,10 @@ export class Instrument {
     public invalidModulators: boolean[] = [];
     public upperNoteLimit: number = Config.maxPitch;
     public lowerNoteLimit: number = 0;
+    public soundFontUrl: string = "";
+    public soundFontName: string = "";
+    public soundFontBank: number = 0;
+    public soundFontPreset: number = 0;
     constructor(isNoiseChannel: boolean, isModChannel: boolean) {
 
         // @jummbus - My screed on how modulator arrays for instruments work, for the benefit of myself in the future, or whoever else.
@@ -1897,6 +1902,13 @@ export class Instrument {
 				this.pulseWidth = Config.pulseWidthRange/2 - 1;
                 this.decimalOffset = 0;
 				break;
+            case InstrumentType.soundfont:
+                this.chord = Config.chords.dictionary["simultaneous"].index;
+                this.soundFontUrl = "";
+                this.soundFontName = "";
+                this.soundFontBank = 0;
+                this.soundFontPreset = 0;
+                break;
             default:
                 throw new Error("Unrecognized instrument type: " + type);
         }
@@ -2122,7 +2134,7 @@ export class Instrument {
             instrumentObject["lowerNoteLimit"] = this.lowerNoteLimit;
         }
 
-        if (this.type != InstrumentType.drumset) {
+        if (this.type != InstrumentType.drumset && this.type != InstrumentType.soundfont) {
             instrumentObject["fadeInSeconds"] = Math.round(10000 * Synth.fadeInSettingToSeconds(this.fadeIn)) / 10000;
             instrumentObject["fadeOutTicks"] = Synth.fadeOutSettingToTicks(this.fadeOut);
         }
@@ -2239,6 +2251,11 @@ export class Instrument {
                 // Meh, waste of space and can be inaccurate. It will be recalc'ed when instrument loads.
                 //instrumentObject["customChipWaveIntegral"][i] = this.customChipWaveIntegral[i];
             }
+        } else if (this.type == InstrumentType.soundfont) {
+            instrumentObject["soundFontUrl"] = this.soundFontUrl;
+            instrumentObject["soundFontName"] = this.soundFontName;
+            instrumentObject["soundFontBank"] = this.soundFontBank;
+            instrumentObject["soundFontPreset"] = this.soundFontPreset;
         } else if (this.type == InstrumentType.mod) {
             instrumentObject["modChannels"] = [];
             instrumentObject["modInstruments"] = [];
@@ -2635,6 +2652,13 @@ export class Instrument {
             if (instrumentObject["wave"] == "pink noise") this.chipNoise = Config.chipNoises.findIndex(wave => wave.name == "pink");
             if (instrumentObject["wave"] == "brownian noise") this.chipNoise = Config.chipNoises.findIndex(wave => wave.name == "brownian");
             if (this.chipNoise == -1) this.chipNoise = 1;
+        }
+
+        if (this.type == InstrumentType.soundfont) {
+            this.soundFontUrl = typeof instrumentObject["soundFontUrl"] == "string" ? instrumentObject["soundFontUrl"] : "";
+            this.soundFontName = typeof instrumentObject["soundFontName"] == "string" ? instrumentObject["soundFontName"] : "";
+            this.soundFontBank = Math.max(0, instrumentObject["soundFontBank"] | 0);
+            this.soundFontPreset = Math.max(0, instrumentObject["soundFontPreset"] | 0);
         }
 
         const legacyEnvelopeNames: Dictionary<string> = { "custom": "note size", "steady": "none", "pluck 1": "twang 1", "pluck 2": "twang 2", "pluck 3": "twang 3" };
@@ -3768,6 +3792,7 @@ export class Song {
                     buffer.push(SongTagCode.unison, base64IntToCharCode[instrument.unison]);
                     if (instrument.unison == Config.unisons.length) encodeUnisonSettings(buffer, instrument.unisonVoices, instrument.unisonSpread, instrument.unisonOffset, instrument.unisonExpression, instrument.unisonSign, instrument.unisonBuzzes);
                     buffer.push(SongTagCode.stringSustain, base64IntToCharCode[instrument.stringSustain | (instrument.stringSustainType << 5)]);
+                } else if (instrument.type == InstrumentType.soundfont) {
                 } else if (instrument.type == InstrumentType.mod) {
                     // Handled down below. Could be moved, but meh.
                 } else {
@@ -7733,6 +7758,7 @@ class Tone {
     public pitchCount: number = 0;
     public chordSize: number = 0;
     public drumsetPitch: number | null = null;
+    public soundFontZone: SoundFontZone | null = null;
     public note: Note | null = null;
     public prevNote: Note | null = null;
     public nextNote: Note | null = null;
@@ -7815,6 +7841,7 @@ class Tone {
     }
 
     public reset(): void {
+        this.soundFontZone = null;
         this.noiseSample = 0.0;
         this.noiseSampleA = 0.0;
         this.noiseSampleB = 0.0;
@@ -11187,6 +11214,8 @@ export class Synth {
 			baseExpression = Config.supersawBaseExpression;
         } else if (instrument.type == InstrumentType.pickedString) {
             baseExpression = Config.pickedStringBaseExpression;
+        } else if (instrument.type == InstrumentType.soundfont) {
+            baseExpression = 0.35;
         } else if (instrument.type == InstrumentType.mod) {
             baseExpression = 1.0;
             expressionReferencePitch = 0;
@@ -11818,7 +11847,36 @@ export class Synth {
             }
 
             const startFreq: number = Instrument.frequencyFromPitch(startPitch);
-            if (instrument.type == InstrumentType.chip || instrument.type == InstrumentType.customChipWave || instrument.type == InstrumentType.harmonics || instrument.type == InstrumentType.pickedString || instrument.type == InstrumentType.spectrum || instrument.type == InstrumentType.pwm || instrument.type == InstrumentType.noise) {
+            if (instrument.type == InstrumentType.soundfont) {
+                const soundFont = SoundFontLibrary.get(instrument.soundFontUrl);
+                if (soundFont != null) {
+                    if (tone.soundFontZone == null || tone.atNoteStart) {
+                        tone.soundFontZone = soundFont.getZone(
+                            instrument.soundFontBank,
+                            instrument.soundFontPreset,
+                            Math.max(0, Math.min(127, Math.round(startPitch))),
+                            127,
+                        );
+                    }
+
+                    const zone = tone.soundFontZone;
+                    if (zone != null) {
+                        const waveLength = Math.max(1, zone.getWave().length);
+                        const startRate = (zone.sampleRate / this.samplesPerSecond) * Math.pow(2.0, (startPitch - zone.rootKey) / 12.0 + zone.tuningCents / 1200.0);
+                        const endRate = (zone.sampleRate / this.samplesPerSecond) * Math.pow(2.0, (endPitch - zone.rootKey) / 12.0 + zone.tuningCents / 1200.0);
+                        tone.phaseDeltas[0] = startRate / waveLength;
+                        tone.phaseDeltaScales[0] = startRate > 0.0 ? Math.pow(endRate / startRate, 1.0 / roundedSamplesPerTick) : 1.0;
+                        settingsExpressionMult *= zone.gain;
+                    } else {
+                        tone.phaseDeltas[0] = 0.0;
+                        tone.phaseDeltaScales[0] = 1.0;
+                    }
+                } else {
+                    tone.soundFontZone = null;
+                    tone.phaseDeltas[0] = 0.0;
+                    tone.phaseDeltaScales[0] = 1.0;
+                }
+            } else if (instrument.type == InstrumentType.chip || instrument.type == InstrumentType.customChipWave || instrument.type == InstrumentType.harmonics || instrument.type == InstrumentType.pickedString || instrument.type == InstrumentType.spectrum || instrument.type == InstrumentType.pwm || instrument.type == InstrumentType.noise) {
                 // These instruments have two waves at different frequencies for the unison feature.
                 //const unison: Unison = Config.unisons[instrument.unison];
                 const unisonVoices: number = instrument.unisonVoices;
@@ -12164,6 +12222,8 @@ export class Synth {
             return Synth.spectrumSynth;
         } else if (instrument.type == InstrumentType.drumset) {
             return Synth.drumsetSynth;
+        } else if (instrument.type == InstrumentType.soundfont) {
+            return Synth.soundFontSynth;
         } else if (instrument.type == InstrumentType.mod) {
             return Synth.modSynth;
         } else if (instrument.type == InstrumentType.fm6op) {
@@ -14175,6 +14235,66 @@ export class Synth {
         tone.phaseDeltas[0] = phaseDelta * referenceDelta;
         tone.expression = expression;
 
+        synth.sanitizeFilters(filters);
+        tone.initialNoteFilterInput1 = initialFilterInput1;
+        tone.initialNoteFilterInput2 = initialFilterInput2;
+    }
+
+    private static soundFontSynth(synth: Synth, bufferIndex: number, roundedSamplesPerTick: number, tone: Tone, instrumentState: InstrumentState): void {
+        const zone = tone.soundFontZone;
+        if (zone == null) return;
+
+        const data: Float32Array = synth.tempMonoInstrumentSampleBuffer!;
+        const wave: Float32Array = zone.getWave();
+        const waveLength: number = wave.length;
+        if (waveLength <= 1) return;
+
+        const filters: DynamicBiquadFilter[] = tone.noteFilters;
+        const filterCount: number = tone.noteFilterCount | 0;
+        let initialFilterInput1: number = +tone.initialNoteFilterInput1;
+        let initialFilterInput2: number = +tone.initialNoteFilterInput2;
+        const applyFilters: Function = Synth.applyFilters;
+
+        let phase: number = Math.max(0.0, tone.phases[0] * waveLength);
+        let phaseDelta: number = tone.phaseDeltas[0] * waveLength;
+        const phaseDeltaScale: number = +tone.phaseDeltaScales[0];
+        let expression: number = +tone.expression;
+        const expressionDelta: number = +tone.expressionDelta;
+        const released: boolean = tone.ticksSinceReleased > 0;
+        const loopEnabled: boolean = zone.loopMode == 1 || (zone.loopMode == 3 && !released);
+        const loopStart: number = Math.max(0, Math.min(waveLength - 2, zone.loopStart));
+        const loopEnd: number = Math.max(loopStart + 1, Math.min(waveLength, zone.loopEnd));
+        const loopLength: number = loopEnd - loopStart;
+
+        const stopIndex: number = bufferIndex + roundedSamplesPerTick;
+        for (let sampleIndex: number = bufferIndex; sampleIndex < stopIndex; sampleIndex++) {
+            if (loopEnabled && loopLength > 1 && phase >= loopEnd) {
+                phase = loopStart + Synth.wrap(phase - loopEnd, loopLength);
+            }
+
+            let inputSample: number = 0.0;
+            if (phase < waveLength - 1) {
+                const phaseInt = Math.floor(phase);
+                const ratio = phase - phaseInt;
+                const first = wave[phaseInt];
+                inputSample = first + (wave[phaseInt + 1] - first) * ratio;
+            } else if (phase < waveLength) {
+                inputSample = wave[waveLength - 1];
+            }
+
+            const sample = applyFilters(inputSample, initialFilterInput1, initialFilterInput2, filterCount, filters);
+            initialFilterInput2 = initialFilterInput1;
+            initialFilterInput1 = inputSample;
+            data[sampleIndex] += sample * expression;
+
+            phase += phaseDelta;
+            phaseDelta *= phaseDeltaScale;
+            expression += expressionDelta;
+        }
+
+        tone.phases[0] = phase / waveLength;
+        tone.phaseDeltas[0] = phaseDelta / waveLength;
+        tone.expression = expression;
         synth.sanitizeFilters(filters);
         tone.initialNoteFilterInput1 = initialFilterInput1;
         tone.initialNoteFilterInput2 = initialFilterInput2;
