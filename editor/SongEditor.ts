@@ -1589,7 +1589,7 @@ export class SongEditor {
     private _wasPlaying: boolean = false;
     private _currentPromptName: string | null = null;
     private _highlightedInstrumentIndex: number = -1;
-    private readonly _loadingRemoteSoundFonts: Set<string> = new Set();
+    private readonly _loadingSoundFonts: Set<string> = new Set();
     private _renderedInstrumentCount: number = 0;
     private _renderedIsPlaying: boolean = false;
     private _renderedIsRecording: boolean = false;
@@ -3145,11 +3145,11 @@ export class SongEditor {
                 const soundFont = SoundFontLibrary.get(instrument.soundFontUrl);
                 if (soundFont != null) {
                     this._populateSoundFontMenus(soundFont, instrument);
-                } else if (instrument.soundFontUrl.startsWith("http://") || instrument.soundFontUrl.startsWith("https://")) {
-                    this._setSoundFontMenusLoading(SoundFontLibrary.isLoading(instrument.soundFontUrl) ? "Loading..." : "Loading URL...");
-                    void this._loadRemoteSoundFontIfNeeded(instrument);
+                } else if (instrument.soundFontUrl != "") {
+                    this._setSoundFontMenusLoading(SoundFontLibrary.isLoading(instrument.soundFontUrl) ? "Loading..." : "Loading SoundFont...");
+                    void this._loadSoundFontIfNeeded(instrument);
                 } else {
-                    this._setSoundFontMenusLoading(instrument.soundFontUrl != "" ? "SoundFont not loaded" : "Load a SoundFont");
+                    this._setSoundFontMenusLoading("Load a SoundFont");
                 }
             }
 
@@ -5960,25 +5960,32 @@ export class SongEditor {
         this._soundFontPresetSelect.disabled = true;
     }
 
-    private _loadRemoteSoundFontIfNeeded = async (instrument: Instrument): Promise<void> => {
+    private _loadSoundFontIfNeeded = async (instrument: Instrument): Promise<void> => {
         if (instrument.type != InstrumentType.soundfont) return;
-        if (!instrument.soundFontUrl.startsWith("http://") && !instrument.soundFontUrl.startsWith("https://")) return;
+        if (instrument.soundFontUrl == "") return;
 
-        const url = normalizeSoundFontUrl(instrument.soundFontUrl);
+        const id = instrument.soundFontUrl.startsWith("http://") || instrument.soundFontUrl.startsWith("https://")
+            ? normalizeSoundFontUrl(instrument.soundFontUrl)
+            : instrument.soundFontUrl;
 
-        if (SoundFontLibrary.get(url) != null || this._loadingRemoteSoundFonts.has(url)) {
+        if (SoundFontLibrary.get(id) != null || this._loadingSoundFonts.has(id)) {
             return;
         }
 
-        this._loadingRemoteSoundFonts.add(url);
+        this._loadingSoundFonts.add(id);
         this._soundFontName.textContent = "Loading SoundFont...";
         this._setSoundFontMenusLoading("Loading...");
 
         try {
-            const font = await SoundFontLibrary.loadFromUrl(url);
+            const font = await SoundFontLibrary.loadById(id, instrument.soundFontName);
 
             if (instrument.type != InstrumentType.soundfont) return;
-            if (normalizeSoundFontUrl(instrument.soundFontUrl) != url) return;
+
+            const currentId = instrument.soundFontUrl.startsWith("http://") || instrument.soundFontUrl.startsWith("https://")
+                ? normalizeSoundFontUrl(instrument.soundFontUrl)
+                : instrument.soundFontUrl;
+
+            if (currentId != id) return;
 
             instrument.soundFontUrl = font.id;
             if (instrument.soundFontName == "") instrument.soundFontName = font.name;
@@ -5997,12 +6004,12 @@ export class SongEditor {
             this._populateSoundFontMenus(font, instrument);
             this._doc.notifier.changed();
         } catch (error) {
-            if (instrument.type == InstrumentType.soundfont && normalizeSoundFontUrl(instrument.soundFontUrl) == url) {
+            if (instrument.type == InstrumentType.soundfont) {
                 this._soundFontName.textContent = error instanceof Error ? error.message : "Could not load SoundFont";
                 this._setSoundFontMenusLoading("Load failed");
             }
         } finally {
-            this._loadingRemoteSoundFonts.delete(url);
+            this._loadingSoundFonts.delete(id);
         }
     }
 
@@ -6080,10 +6087,8 @@ export class SongEditor {
         this._soundFontName.textContent = "Loading " + file.name + "...";
 
         try {
-            const id = URL.createObjectURL(file);
-            const buffer = await file.arrayBuffer();
-            const font = SoundFontLibrary.loadFromArrayBuffer(id, file.name, buffer);
-            this._useLoadedSoundFont(font, id, file.name);
+            const font = await SoundFontLibrary.loadFromFile(file);
+            this._useLoadedSoundFont(font, font.id, file.name);
         } catch (error) {
             this._soundFontName.textContent = error instanceof Error ? error.message : "Could not load SoundFont";
             this._setSoundFontMenusLoading("Load failed");

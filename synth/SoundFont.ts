@@ -294,6 +294,18 @@ export class SoundFontData {
     }
 }
 
+export type SoundFontLoadProgress = (loadedBytes: number, totalBytes: number | null) => void;
+
+interface CachedSoundFont {
+    id: string;
+    name: string;
+    buffer: ArrayBuffer;
+    updatedAt: number;
+}
+
+const soundFontDatabaseName = "AbyssBoxSoundFonts";
+const soundFontStoreName = "fonts";
+
 export function normalizeSoundFontUrl(value: string): string {
     let url = value.trim();
 
@@ -346,6 +358,112 @@ function validateRemoteSoundFontResponse(url: string, response: Response, buffer
     }
 }
 
+function openSoundFontDatabase(): Promise<IDBDatabase | null> {
+    if (typeof indexedDB == "undefined") return Promise.resolve(null);
+
+    return new Promise(resolve => {
+        const request = indexedDB.open(soundFontDatabaseName, 1);
+
+        request.onupgradeneeded = () => {
+            const database = request.result;
+            if (!database.objectStoreNames.contains(soundFontStoreName)) {
+                database.createObjectStore(soundFontStoreName, { keyPath: "id" });
+            }
+        };
+
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => resolve(null);
+        request.onblocked = () => resolve(null);
+    });
+}
+
+async function getCachedSoundFont(id: string): Promise<CachedSoundFont | null> {
+    const database = await openSoundFontDatabase();
+    if (database == null) return null;
+
+    return new Promise(resolve => {
+        const transaction = database.transaction(soundFontStoreName, "readonly");
+        const request = transaction.objectStore(soundFontStoreName).get(id);
+
+        request.onsuccess = () => resolve(request.result || null);
+        request.onerror = () => resolve(null);
+        transaction.oncomplete = () => database.close();
+        transaction.onerror = () => database.close();
+        transaction.onabort = () => database.close();
+    });
+}
+
+async function saveCachedSoundFont(id: string, name: string, buffer: ArrayBuffer): Promise<void> {
+    const database = await openSoundFontDatabase();
+    if (database == null) return;
+
+    await new Promise<void>(resolve => {
+        const transaction = database.transaction(soundFontStoreName, "readwrite");
+        transaction.objectStore(soundFontStoreName).put({
+            id,
+            name,
+            buffer,
+            updatedAt: Date.now(),
+        } as CachedSoundFont);
+
+        transaction.oncomplete = () => {
+            database.close();
+            resolve();
+        };
+
+        transaction.onerror = () => {
+            database.close();
+            resolve();
+        };
+
+        transaction.onabort = () => {
+            database.close();
+            resolve();
+        };
+    });
+}
+
+async function readResponseBuffer(response: Response, onProgress?: SoundFontLoadProgress): Promise<ArrayBuffer> {
+    const totalHeader = response.headers.get("content-length");
+    const total = totalHeader != null && totalHeader != "" ? Number(totalHeader) : null;
+
+    if (response.body == null || typeof response.body.getReader != "function") {
+        const buffer = await response.arrayBuffer();
+        if (onProgress != undefined) onProgress(buffer.byteLength, buffer.byteLength);
+        return buffer;
+    }
+
+    const reader = response.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let received = 0;
+
+    while (true) {
+        const result = await reader.read();
+        if (result.done) break;
+
+        if (result.value != undefined) {
+            chunks.push(result.value);
+            received += result.value.byteLength;
+            if (onProgress != undefined) onProgress(received, total);
+        }
+    }
+
+    const merged = new Uint8Array(received);
+    let offset = 0;
+
+    for (const chunk of chunks) {
+        merged.set(chunk, offset);
+        offset += chunk.byteLength;
+    }
+
+    if (onProgress != undefined) onProgress(received, total != null ? total : received);
+    return merged.buffer;
+}
+
+function makeLocalSoundFontId(file: File): string {
+    return "local:" + encodeURIComponent(file.name) + ":" + file.size + ":" + file.lastModified;
+}
+
 export class SoundFontLibrary {
     private static readonly _fonts: Map<string, SoundFontData> = new Map();
     private static readonly _loading: Map<string, Promise<SoundFontData>> = new Map();
@@ -370,7 +488,54 @@ export class SoundFontLibrary {
         return this._loading.has(normalized);
     }
 
-    public static async loadFromUrl(value: string): Promise<SoundFontData> {
+    public static isLocal(id: string): boolean {
+        return id.startsWith("local:");
+    }
+
+    public static async loadById(id: string, name: string = "", onProgress?: SoundFontLoadProgress): Promise<SoundFontData> {
+        if (id == "") throw new Error("No SoundFont is selected.");
+
+        const normalized = id.startsWith("http://") || id.startsWith("https://")
+            ? normalizeSoundFontUrl(id)
+            : id;
+
+        const existing = this._fonts.get(normalized);
+        if (existing != undefined) return existing;
+
+        const loading = this._loading.get(normalized);
+        if (loading != undefined) return loading;
+
+        if (normalized.startsWith("http://") || normalized.startsWith("https://")) {
+            return this.loadFromUrl(normalized, onProgress);
+        }
+
+        const promise = (async () => {
+            const cached = await getCachedSoundFont(normalized);
+            if (cached != null) {
+                return this.loadFromArrayBuffer(normalized, cached.name || name || "SoundFont", cached.buffer);
+            }
+
+            if (normalized.startsWith("blob:")) {
+                throw new Error("This SoundFont used an old temporary browser URL. Load the .sf2 file again once so AbyssBox can save it properly.");
+            }
+
+            if (normalized.startsWith("local:")) {
+                throw new Error("This local SoundFont is not saved in this browser. Load the .sf2 file again.");
+            }
+
+            throw new Error("Could not find this SoundFont.");
+        })();
+
+        this._loading.set(normalized, promise);
+
+        try {
+            return await promise;
+        } finally {
+            this._loading.delete(normalized);
+        }
+    }
+
+    public static async loadFromUrl(value: string, onProgress?: SoundFontLoadProgress): Promise<SoundFontData> {
         const url = normalizeSoundFontUrl(value);
 
         if (url.length == 0) {
@@ -392,33 +557,55 @@ export class SoundFontLibrary {
         if (loading != undefined) return loading;
 
         const promise = (async () => {
-            let response: Response;
+            const cached = await getCachedSoundFont(url);
+            if (cached != null) {
+                try {
+                    return this.loadFromArrayBuffer(url, cached.name || soundFontNameFromUrl(url), cached.buffer);
+                } catch {
+                }
+            }
+
+            const controller = new AbortController();
+            const timeout = window.setTimeout(() => controller.abort(), 120000);
 
             try {
-                response = await fetch(url, {
-                    method: "GET",
-                    mode: "cors",
-                    credentials: "omit",
-                    redirect: "follow",
-                    cache: "default",
-                });
-            } catch (error) {
-                if (error instanceof TypeError) {
-                    throw new Error("The browser could not fetch this URL. It may be blocked by CORS, the URL may not be public, or the host may be offline.");
+                let response: Response;
+
+                try {
+                    response = await fetch(url, {
+                        method: "GET",
+                        mode: "cors",
+                        credentials: "omit",
+                        redirect: "follow",
+                        cache: "default",
+                        signal: controller.signal,
+                    });
+                } catch (error) {
+                    if (error instanceof DOMException && error.name == "AbortError") {
+                        throw new Error("SoundFont download timed out after 2 minutes.");
+                    }
+
+                    if (error instanceof TypeError) {
+                        throw new Error("The browser could not fetch this URL. It may be blocked by CORS, the URL may not be public, or the host may be offline.");
+                    }
+
+                    throw error;
                 }
 
-                throw error;
+                if (!response.ok) {
+                    throw new Error("Could not load SoundFont (HTTP " + response.status + ").");
+                }
+
+                const buffer = await readResponseBuffer(response, onProgress);
+                validateRemoteSoundFontResponse(url, response, buffer);
+
+                const name = soundFontNameFromUrl(response.url || url);
+                const font = this.loadFromArrayBuffer(url, name, buffer);
+                void saveCachedSoundFont(url, name, buffer);
+                return font;
+            } finally {
+                window.clearTimeout(timeout);
             }
-
-            if (!response.ok) {
-                throw new Error("Could not load SoundFont (HTTP " + response.status + ").");
-            }
-
-            const buffer = await response.arrayBuffer();
-            validateRemoteSoundFontResponse(url, response, buffer);
-
-            const name = soundFontNameFromUrl(response.url || url);
-            return this.loadFromArrayBuffer(url, name, buffer);
         })();
 
         this._loading.set(url, promise);
@@ -427,6 +614,31 @@ export class SoundFontLibrary {
             return await promise;
         } finally {
             this._loading.delete(url);
+        }
+    }
+
+    public static async loadFromFile(file: File): Promise<SoundFontData> {
+        const id = makeLocalSoundFontId(file);
+
+        const existing = this._fonts.get(id);
+        if (existing != undefined) return existing;
+
+        const loading = this._loading.get(id);
+        if (loading != undefined) return loading;
+
+        const promise = (async () => {
+            const buffer = await file.arrayBuffer();
+            const font = this.loadFromArrayBuffer(id, file.name, buffer);
+            await saveCachedSoundFont(id, file.name, buffer);
+            return font;
+        })();
+
+        this._loading.set(id, promise);
+
+        try {
+            return await promise;
+        } finally {
+            this._loading.delete(id);
         }
     }
 

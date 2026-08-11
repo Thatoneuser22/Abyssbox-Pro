@@ -316,7 +316,7 @@ const enum SongTagCode {
 	arpeggioSpeed       = CharCode.G, // added in JummBox URL version 3 for arpeggioSpeed, DEPRECATED
 	harmonics           = CharCode.H, // added in BeepBox URL version 7
 	stringSustain       = CharCode.I, // added in BeepBox URL version 9
-//	                    = CharCode.J,
+    soundFont          = CharCode.J, // added in AbyssBox URL version 4
 //	                    = CharCode.K,
 	pan                 = CharCode.L, // added between 8 and 9, DEPRECATED
 	customChipWave      = CharCode.M, // added in JummBox URL version 1(?) for customChipWave
@@ -3143,7 +3143,7 @@ export class Song {
     private static readonly _oldestUltraBoxVersion: number = 1;
     private static readonly _latestUltraBoxVersion: number = 6;
     private static readonly _oldestAbyssBoxVersion: number = 1;
-    private static readonly _latestAbyssBoxVersion: number = 3;
+    private static readonly _latestAbyssBoxVersion: number = 4;
     // One-character variant detection at the start of URL to distinguish variants such as JummBox, Or Goldbox. "j" and "g" respectively
 	//also "u" is ultrabox lol
     private static readonly _variant = 0x61; //"a" ~ abyssbox
@@ -3793,6 +3793,35 @@ export class Song {
                     if (instrument.unison == Config.unisons.length) encodeUnisonSettings(buffer, instrument.unisonVoices, instrument.unisonSpread, instrument.unisonOffset, instrument.unisonExpression, instrument.unisonSign, instrument.unisonBuzzes);
                     buffer.push(SongTagCode.stringSustain, base64IntToCharCode[instrument.stringSustain | (instrument.stringSustainType << 5)]);
                 } else if (instrument.type == InstrumentType.soundfont) {
+                    const encodedSoundFontUrl = encodeURIComponent(instrument.soundFontUrl);
+                    const encodedSoundFontName = encodeURIComponent(instrument.soundFontName);
+
+                    if (encodedSoundFontUrl.length > 0xfff || encodedSoundFontName.length > 0xfff) {
+                        throw new Error("SoundFont URL or name is too long to save in a song URL.");
+                    }
+
+                    buffer.push(SongTagCode.soundFont);
+                    buffer.push(base64IntToCharCode[encodedSoundFontUrl.length >> 6], base64IntToCharCode[encodedSoundFontUrl.length & 0x3f]);
+
+                    for (let i = 0; i < encodedSoundFontUrl.length; i++) {
+                        buffer.push(encodedSoundFontUrl.charCodeAt(i));
+                    }
+
+                    buffer.push(base64IntToCharCode[encodedSoundFontName.length >> 6], base64IntToCharCode[encodedSoundFontName.length & 0x3f]);
+
+                    for (let i = 0; i < encodedSoundFontName.length; i++) {
+                        buffer.push(encodedSoundFontName.charCodeAt(i));
+                    }
+
+                    const soundFontBank = Math.max(0, Math.min(0xfff, instrument.soundFontBank | 0));
+                    const soundFontPreset = Math.max(0, Math.min(0xfff, instrument.soundFontPreset | 0));
+
+                    buffer.push(
+                        base64IntToCharCode[soundFontBank >> 6],
+                        base64IntToCharCode[soundFontBank & 0x3f],
+                        base64IntToCharCode[soundFontPreset >> 6],
+                        base64IntToCharCode[soundFontPreset & 0x3f],
+                    );
                 } else if (instrument.type == InstrumentType.mod) {
                     // Handled down below. Could be moved, but meh.
                 } else {
@@ -4520,6 +4549,41 @@ export class Song {
                         // Enable chord if it was used.
                         instrument.effects |= 1 << EffectType.chord;
                     }
+                }
+            } break;
+            case SongTagCode.soundFont: {
+                const instrument = this.channels[instrumentChannelIterator].instruments[instrumentIndexIterator];
+
+                const urlLength = (base64CharCodeToInt[compressed.charCodeAt(charIndex++)] << 6) + base64CharCodeToInt[compressed.charCodeAt(charIndex++)];
+                const encodedUrl = compressed.substring(charIndex, charIndex + urlLength);
+                charIndex += urlLength;
+
+                const nameLength = (base64CharCodeToInt[compressed.charCodeAt(charIndex++)] << 6) + base64CharCodeToInt[compressed.charCodeAt(charIndex++)];
+                const encodedName = compressed.substring(charIndex, charIndex + nameLength);
+                charIndex += nameLength;
+
+                try {
+                    instrument.soundFontUrl = decodeURIComponent(encodedUrl);
+                } catch {
+                    instrument.soundFontUrl = encodedUrl;
+                }
+
+                try {
+                    instrument.soundFontName = decodeURIComponent(encodedName);
+                } catch {
+                    instrument.soundFontName = encodedName;
+                }
+
+                instrument.soundFontBank =
+                    (base64CharCodeToInt[compressed.charCodeAt(charIndex++)] << 6) +
+                    base64CharCodeToInt[compressed.charCodeAt(charIndex++)];
+
+                instrument.soundFontPreset =
+                    (base64CharCodeToInt[compressed.charCodeAt(charIndex++)] << 6) +
+                    base64CharCodeToInt[compressed.charCodeAt(charIndex++)];
+
+                if (instrument.soundFontUrl != "") {
+                    void SoundFontLibrary.loadById(instrument.soundFontUrl, instrument.soundFontName).catch(() => {});
                 }
             } break;
             case SongTagCode.preset: {

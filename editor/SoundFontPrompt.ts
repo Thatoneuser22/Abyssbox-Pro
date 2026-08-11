@@ -80,10 +80,20 @@ export class SoundFontPrompt {
 
         this._loadButton.disabled = true;
         this._urlInput.disabled = true;
-        this._status.textContent = "Downloading SoundFont...";
+        this._status.textContent = "Connecting...";
 
         try {
-            const font = await SoundFontLibrary.loadFromUrl(url);
+            const font = await SoundFontLibrary.loadFromUrl(url, (loadedBytes, totalBytes) => {
+                const loadedMB = loadedBytes / 1024 / 1024;
+
+                if (totalBytes != null && totalBytes > 0) {
+                    const totalMB = totalBytes / 1024 / 1024;
+                    const percent = Math.min(100, Math.round(loadedBytes / totalBytes * 100));
+                    this._status.textContent = "Downloading " + percent + "% (" + loadedMB.toFixed(1) + " / " + totalMB.toFixed(1) + " MB)";
+                } else {
+                    this._status.textContent = "Downloading " + loadedMB.toFixed(1) + " MB...";
+                }
+            });
             const presets = font.getPresetInfos();
 
             if (presets.length == 0) {
