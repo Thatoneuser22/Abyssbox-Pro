@@ -1347,7 +1347,13 @@ export class SongEditor {
         ),
     );
 
-    private readonly _soundFontFileInput: HTMLInputElement = input({ type: "file", accept: ".sf2,audio/sf2", style: "display: none;" });
+    private readonly _isAppleTouchDevice: boolean =
+        /iPad|iPhone|iPod/i.test(navigator.userAgent) ||
+        (navigator.platform == "MacIntel" && navigator.maxTouchPoints > 1);
+    private readonly _soundFontFileInput: HTMLInputElement = input({
+        type: "file",
+        style: "position: fixed; left: -10000px; top: 0; width: 1px; height: 1px; opacity: 0;",
+    });
     private readonly _soundFontLoadButton: HTMLButtonElement = button({ type: "button", style: "width: 50%; font-size: x-small;" }, "Load .SF2");
     private readonly _soundFontUrlButton: HTMLButtonElement = button({ type: "button", class: "last-button", style: "width: 50%; font-size: x-small;" }, "From URL");
     private readonly _soundFontName: HTMLSpanElement = span({ style: `font-size: x-small; color: ${ColorConfig.secondaryText}; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;` }, "No SoundFont loaded");
@@ -1796,6 +1802,13 @@ export class SongEditor {
         this._keySelect.addEventListener("change", this._whenSetKey);
         this._octaveStepper.addEventListener("change", this._whenSetOctave);
         this._rhythmSelect.addEventListener("change", this._whenSetRhythm);
+
+        if (this._isAppleTouchDevice) {
+            this._soundFontFileInput.removeAttribute("accept");
+        } else {
+            this._soundFontFileInput.accept = ".sf2,.SF2,audio/sf2,audio/x-sf2,application/octet-stream";
+        }
+
         this._soundFontLoadButton.addEventListener("click", this._whenOpenSoundFontFile);
         this._soundFontUrlButton.addEventListener("click", this._whenOpenSoundFontUrl);
         this._soundFontFileInput.addEventListener("change", this._whenLoadSoundFontFile);
@@ -6091,6 +6104,24 @@ export class SongEditor {
     }
 
     private _whenOpenSoundFontFile = (): void => {
+        this._soundFontFileInput.value = "";
+
+        if (this._isAppleTouchDevice) {
+            this._soundFontFileInput.removeAttribute("accept");
+        } else {
+            this._soundFontFileInput.accept = ".sf2,.SF2,audio/sf2,audio/x-sf2,application/octet-stream";
+        }
+
+        const picker = this._soundFontFileInput as HTMLInputElement & { showPicker?: () => void };
+
+        try {
+            if (picker.showPicker != undefined) {
+                picker.showPicker();
+                return;
+            }
+        } catch {
+        }
+
         this._soundFontFileInput.click();
     }
 
@@ -6099,7 +6130,7 @@ export class SongEditor {
         if (file == null) return;
 
         this._setSoundFontMenusLoading("Loading...");
-        this._soundFontName.textContent = "Loading " + file.name + "...";
+        this._soundFontName.textContent = "Reading " + file.name + "...";
 
         try {
             const font = await SoundFontLibrary.loadFromFile(file);
