@@ -114,7 +114,27 @@ export class SoundFontPrompt {
 
             requestAnimationFrame(() => this._close());
         } catch (error) {
-            this._status.textContent = error instanceof Error ? error.message : "Could not load this SoundFont.";
+            const cached = await SoundFontLibrary.loadCached(url);
+
+            if (cached != null) {
+                const presets = cached.getPresetInfos();
+                const instrument = this._getInstrument();
+
+                if (presets.length > 0) {
+                    instrument.soundFontUrl = cached.id;
+                    instrument.soundFontName = cached.name;
+                    instrument.soundFontBank = presets[0].bank;
+                    instrument.soundFontPreset = presets[0].preset;
+                    this._doc.notifier.changed();
+                    this._status.textContent = "Loaded cached SoundFont.";
+                    requestAnimationFrame(() => this._close());
+                    return;
+                }
+            }
+
+            const message = error instanceof Error ? error.message : "Could not load this SoundFont.";
+            console.error("SoundFont URL load failed:", url, error);
+            this._status.textContent = message;
             this._loadButton.disabled = false;
             this._urlInput.disabled = false;
             this._urlInput.focus();

@@ -557,14 +557,6 @@ export class SoundFontLibrary {
         if (loading != undefined) return loading;
 
         const promise = (async () => {
-            const cached = await getCachedSoundFont(url);
-            if (cached != null) {
-                try {
-                    return this.loadFromArrayBuffer(url, cached.name || soundFontNameFromUrl(url), cached.buffer);
-                } catch {
-                }
-            }
-
             const controller = new AbortController();
             const timeout = window.setTimeout(() => controller.abort(), 120000);
 
@@ -577,7 +569,7 @@ export class SoundFontLibrary {
                         mode: "cors",
                         credentials: "omit",
                         redirect: "follow",
-                        cache: "default",
+                        cache: "no-store",
                         signal: controller.signal,
                     });
                 } catch (error) {
@@ -586,7 +578,7 @@ export class SoundFontLibrary {
                     }
 
                     if (error instanceof TypeError) {
-                        throw new Error("The browser could not fetch this URL. It may be blocked by CORS, the URL may not be public, or the host may be offline.");
+                        throw new Error("Failed to fetch this SoundFont. Open DevTools > Console for the browser's network/CORS error.");
                     }
 
                     throw error;
@@ -617,6 +609,24 @@ export class SoundFontLibrary {
         }
     }
 
+    public static async loadCached(id: string, name: string = ""): Promise<SoundFontData | null> {
+        const normalized = id.startsWith("http://") || id.startsWith("https://")
+            ? normalizeSoundFontUrl(id)
+            : id;
+
+        const existing = this._fonts.get(normalized);
+        if (existing != undefined) return existing;
+
+        const cached = await getCachedSoundFont(normalized);
+        if (cached == null) return null;
+
+        try {
+            return this.loadFromArrayBuffer(normalized, cached.name || name || "SoundFont", cached.buffer);
+        } catch {
+            return null;
+        }
+    }
+
     public static async loadFromFile(file: File): Promise<SoundFontData> {
         const id = makeLocalSoundFontId(file);
 
@@ -629,7 +639,7 @@ export class SoundFontLibrary {
         const promise = (async () => {
             const buffer = await file.arrayBuffer();
             const font = this.loadFromArrayBuffer(id, file.name, buffer);
-            await saveCachedSoundFont(id, file.name, buffer);
+            void saveCachedSoundFont(id, file.name, buffer);
             return font;
         })();
 

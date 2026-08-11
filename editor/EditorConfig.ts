@@ -24,8 +24,8 @@ export function prettyNumber(value: number): string {
 }
 
 export class EditorConfig {
-    public static readonly version: string = "1.7"; // Using patch versions in display right now, maybe TODAY. // choptop84 here who wrote this??
-    public static readonly versionDisplayName: string = "AbyssBox " + EditorConfig.version;
+    public static readonly version: string = "0.12"; // Using patch versions in display right now, maybe TODAY. // choptop84 here who wrote this??
+    public static readonly versionDisplayName: string = "AbyssBox Pro " + EditorConfig.version;
 
     public static readonly releaseNotesURL: string = "./patch_notes.html";
 

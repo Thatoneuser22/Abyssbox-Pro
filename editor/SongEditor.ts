@@ -1590,6 +1590,7 @@ export class SongEditor {
     private _currentPromptName: string | null = null;
     private _highlightedInstrumentIndex: number = -1;
     private readonly _loadingSoundFonts: Set<string> = new Set();
+    private readonly _failedSoundFonts: Map<string, string> = new Map();
     private _renderedInstrumentCount: number = 0;
     private _renderedIsPlaying: boolean = false;
     private _renderedIsRecording: boolean = false;
@@ -3146,8 +3147,18 @@ export class SongEditor {
                 if (soundFont != null) {
                     this._populateSoundFontMenus(soundFont, instrument);
                 } else if (instrument.soundFontUrl != "") {
-                    this._setSoundFontMenusLoading(SoundFontLibrary.isLoading(instrument.soundFontUrl) ? "Loading..." : "Loading SoundFont...");
-                    void this._loadSoundFontIfNeeded(instrument);
+                    const id = instrument.soundFontUrl.startsWith("http://") || instrument.soundFontUrl.startsWith("https://")
+                        ? normalizeSoundFontUrl(instrument.soundFontUrl)
+                        : instrument.soundFontUrl;
+
+                    const failed = this._failedSoundFonts.get(id);
+                    if (failed != undefined) {
+                        this._soundFontName.textContent = failed;
+                        this._setSoundFontMenusLoading("Load failed");
+                    } else {
+                        this._setSoundFontMenusLoading(SoundFontLibrary.isLoading(id) ? "Loading..." : "Loading SoundFont...");
+                        void this._loadSoundFontIfNeeded(instrument);
+                    }
                 } else {
                     this._setSoundFontMenusLoading("Load a SoundFont");
                 }
@@ -5988,6 +5999,7 @@ export class SongEditor {
             if (currentId != id) return;
 
             instrument.soundFontUrl = font.id;
+            this._failedSoundFonts.delete(id);
             if (instrument.soundFontName == "") instrument.soundFontName = font.name;
 
             const infos = font.getPresetInfos();
@@ -6005,7 +6017,10 @@ export class SongEditor {
             this._doc.notifier.changed();
         } catch (error) {
             if (instrument.type == InstrumentType.soundfont) {
-                this._soundFontName.textContent = error instanceof Error ? error.message : "Could not load SoundFont";
+                const message = error instanceof Error ? error.message : "Could not load SoundFont";
+                this._failedSoundFonts.set(id, message);
+                console.error("SoundFont automatic load failed:", id, error);
+                this._soundFontName.textContent = message;
                 this._setSoundFontMenusLoading("Load failed");
             }
         } finally {
@@ -6088,6 +6103,7 @@ export class SongEditor {
 
         try {
             const font = await SoundFontLibrary.loadFromFile(file);
+            this._failedSoundFonts.delete(font.id);
             this._useLoadedSoundFont(font, font.id, file.name);
         } catch (error) {
             this._soundFontName.textContent = error instanceof Error ? error.message : "Could not load SoundFont";
