@@ -16,7 +16,7 @@ import { SetThemePrompt } from "./SongThemePrompt"
 import { EuclideanRhythmPrompt } from "./EuclidgenRhythmPrompt";
 import "./Layout"; // Imported here for the sake of ensuring this code is transpiled early.
 import { Instrument, Channel, Synth, clamp } from "../synth/synth";
-import { SoundFontData, SoundFontLibrary } from "../synth/SoundFont";
+import { SoundFontData, SoundFontLibrary, normalizeSoundFontUrl } from "../synth/SoundFont";
 import { HTML, SVG } from "imperative-html/dist/esm/elements-strict";
 import { Preferences } from "./Preferences";
 import { HarmonicsEditor, HarmonicsEditorPrompt } from "./HarmonicsEditor";
@@ -1589,6 +1589,7 @@ export class SongEditor {
     private _wasPlaying: boolean = false;
     private _currentPromptName: string | null = null;
     private _highlightedInstrumentIndex: number = -1;
+    private readonly _loadingRemoteSoundFonts: Set<string> = new Set();
     private _renderedInstrumentCount: number = 0;
     private _renderedIsPlaying: boolean = false;
     private _renderedIsRecording: boolean = false;
@@ -3144,6 +3145,9 @@ export class SongEditor {
                 const soundFont = SoundFontLibrary.get(instrument.soundFontUrl);
                 if (soundFont != null) {
                     this._populateSoundFontMenus(soundFont, instrument);
+                } else if (instrument.soundFontUrl.startsWith("http://") || instrument.soundFontUrl.startsWith("https://")) {
+                    this._setSoundFontMenusLoading(SoundFontLibrary.isLoading(instrument.soundFontUrl) ? "Loading..." : "Loading URL...");
+                    void this._loadRemoteSoundFontIfNeeded(instrument);
                 } else {
                     this._setSoundFontMenusLoading(instrument.soundFontUrl != "" ? "SoundFont not loaded" : "Load a SoundFont");
                 }
@@ -5956,6 +5960,52 @@ export class SongEditor {
         this._soundFontPresetSelect.disabled = true;
     }
 
+    private _loadRemoteSoundFontIfNeeded = async (instrument: Instrument): Promise<void> => {
+        if (instrument.type != InstrumentType.soundfont) return;
+        if (!instrument.soundFontUrl.startsWith("http://") && !instrument.soundFontUrl.startsWith("https://")) return;
+
+        const url = normalizeSoundFontUrl(instrument.soundFontUrl);
+
+        if (SoundFontLibrary.get(url) != null || this._loadingRemoteSoundFonts.has(url)) {
+            return;
+        }
+
+        this._loadingRemoteSoundFonts.add(url);
+        this._soundFontName.textContent = "Loading SoundFont...";
+        this._setSoundFontMenusLoading("Loading...");
+
+        try {
+            const font = await SoundFontLibrary.loadFromUrl(url);
+
+            if (instrument.type != InstrumentType.soundfont) return;
+            if (normalizeSoundFontUrl(instrument.soundFontUrl) != url) return;
+
+            instrument.soundFontUrl = font.id;
+            if (instrument.soundFontName == "") instrument.soundFontName = font.name;
+
+            const infos = font.getPresetInfos();
+            if (infos.length == 0) {
+                throw new Error("This SoundFont does not contain any playable presets.");
+            }
+
+            if (!font.getPreset(instrument.soundFontBank, instrument.soundFontPreset)) {
+                instrument.soundFontBank = infos[0].bank;
+                instrument.soundFontPreset = infos[0].preset;
+            }
+
+            this._soundFontName.textContent = instrument.soundFontName != "" ? instrument.soundFontName : font.name;
+            this._populateSoundFontMenus(font, instrument);
+            this._doc.notifier.changed();
+        } catch (error) {
+            if (instrument.type == InstrumentType.soundfont && normalizeSoundFontUrl(instrument.soundFontUrl) == url) {
+                this._soundFontName.textContent = error instanceof Error ? error.message : "Could not load SoundFont";
+                this._setSoundFontMenusLoading("Load failed");
+            }
+        } finally {
+            this._loadingRemoteSoundFonts.delete(url);
+        }
+    }
+
     private _populateSoundFontPresetMenu = (font: SoundFontData, instrument: Instrument): void => {
         this._clearSoundFontSelect(this._soundFontPresetSelect);
 
@@ -6008,7 +6058,7 @@ export class SongEditor {
         const instrument = this._getCurrentSoundFontInstrument();
         const firstPreset = font.getPresetInfos()[0];
 
-        instrument.soundFontUrl = id;
+        instrument.soundFontUrl = font.id;
         instrument.soundFontName = name;
         instrument.soundFontBank = firstPreset.bank;
         instrument.soundFontPreset = firstPreset.preset;

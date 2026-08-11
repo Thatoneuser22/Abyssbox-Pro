@@ -294,15 +294,97 @@ export class SoundFontData {
     }
 }
 
+export function normalizeSoundFontUrl(value: string): string {
+    let url = value.trim();
+
+    if (url.startsWith("http://file.garden/")) {
+        url = "https://" + url.substring("http://".length);
+    }
+
+    if (url.startsWith("http://www.file.garden/")) {
+        url = "https://file.garden/" + url.substring("http://www.file.garden/".length);
+    }
+
+    if (url.startsWith("https://www.file.garden/")) {
+        url = "https://file.garden/" + url.substring("https://www.file.garden/".length);
+    }
+
+    return url;
+}
+
+function soundFontNameFromUrl(url: string): string {
+    const cleanUrl = url.split("#")[0].split("?")[0];
+    const encodedName = cleanUrl.substring(cleanUrl.lastIndexOf("/") + 1);
+
+    if (encodedName.length == 0) return "SoundFont";
+
+    try {
+        return decodeURIComponent(encodedName);
+    } catch {
+        return encodedName;
+    }
+}
+
+function validateRemoteSoundFontResponse(url: string, response: Response, buffer: ArrayBuffer): void {
+    const contentType = (response.headers.get("content-type") || "").toLowerCase();
+
+    if (contentType.includes("text/html")) {
+        if (url.includes("filegarden.com/")) {
+            throw new Error("That is a File Garden page, not the file. Use the file's Copy Link button and paste the https://file.garden/... link.");
+        }
+
+        throw new Error("This URL returned a web page instead of an .sf2 file. Use a direct file URL.");
+    }
+
+    if (buffer.byteLength < 12) {
+        throw new Error("The SoundFont download was empty or too small.");
+    }
+
+    const view = new DataView(buffer);
+    if (readFourCC(view, 0) != "RIFF" || readFourCC(view, 8) != "sfbk") {
+        throw new Error("The URL did not return a valid .sf2 SoundFont.");
+    }
+}
+
 export class SoundFontLibrary {
     private static readonly _fonts: Map<string, SoundFontData> = new Map();
     private static readonly _loading: Map<string, Promise<SoundFontData>> = new Map();
 
     public static get(id: string): SoundFontData | null {
-        return this._fonts.get(id) || null;
+        if (id == "") return null;
+
+        const normalized = id.startsWith("http://") || id.startsWith("https://")
+            ? normalizeSoundFontUrl(id)
+            : id;
+
+        return this._fonts.get(normalized) || this._fonts.get(id) || null;
     }
 
-    public static async loadFromUrl(url: string): Promise<SoundFontData> {
+    public static isLoading(id: string): boolean {
+        if (id == "") return false;
+
+        const normalized = id.startsWith("http://") || id.startsWith("https://")
+            ? normalizeSoundFontUrl(id)
+            : id;
+
+        return this._loading.has(normalized);
+    }
+
+    public static async loadFromUrl(value: string): Promise<SoundFontData> {
+        const url = normalizeSoundFontUrl(value);
+
+        if (url.length == 0) {
+            throw new Error("Paste a SoundFont URL first.");
+        }
+
+        if (!url.startsWith("https://") && !url.startsWith("http://")) {
+            throw new Error("SoundFont URLs must start with https:// or http://.");
+        }
+
+        if (url.includes("filegarden.com/")) {
+            throw new Error("Use the direct File Garden file link that starts with https://file.garden/, not the File Garden website page.");
+        }
+
         const existing = this._fonts.get(url);
         if (existing != undefined) return existing;
 
@@ -310,16 +392,37 @@ export class SoundFontLibrary {
         if (loading != undefined) return loading;
 
         const promise = (async () => {
-            const response = await fetch(url);
-            if (!response.ok) throw new Error("Could not load SoundFont (HTTP " + response.status + ").");
+            let response: Response;
+
+            try {
+                response = await fetch(url, {
+                    method: "GET",
+                    mode: "cors",
+                    credentials: "omit",
+                    redirect: "follow",
+                    cache: "default",
+                });
+            } catch (error) {
+                if (error instanceof TypeError) {
+                    throw new Error("The browser could not fetch this URL. It may be blocked by CORS, the URL may not be public, or the host may be offline.");
+                }
+
+                throw error;
+            }
+
+            if (!response.ok) {
+                throw new Error("Could not load SoundFont (HTTP " + response.status + ").");
+            }
+
             const buffer = await response.arrayBuffer();
-            const cleanUrl = url.split("?")[0];
-            const encodedName = cleanUrl.substring(cleanUrl.lastIndexOf("/") + 1);
-            const name = encodedName.length > 0 ? decodeURIComponent(encodedName) : "SoundFont";
+            validateRemoteSoundFontResponse(url, response, buffer);
+
+            const name = soundFontNameFromUrl(response.url || url);
             return this.loadFromArrayBuffer(url, name, buffer);
         })();
 
         this._loading.set(url, promise);
+
         try {
             return await promise;
         } finally {

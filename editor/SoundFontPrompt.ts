@@ -1,8 +1,8 @@
 import { HTML } from "imperative-html/dist/esm/elements-strict";
-import { SoundFontLibrary } from "../synth/SoundFont";
+import { SoundFontLibrary, normalizeSoundFontUrl } from "../synth/SoundFont";
 import { SongDocument } from "./SongDocument";
 
-const { div, input, button, span, h2, a } = HTML;
+const { div, input, button, span, h2 } = HTML;
 
 export class SoundFontPrompt {
     public gotMouseUp: boolean = false;
@@ -31,9 +31,9 @@ export class SoundFontPrompt {
             div({ class: "promptTitle" }, h2({ style: "margin-bottom: 0.5em;" }, "Add SoundFont")),
             div(
                 { style: "text-align: center; margin-bottom: 0.75em;" },
-                "Paste a direct .sf2 URL. ",
-                a({ href: "https://filegarden.com/", target: "_blank" }, "File Garden"),
-                " links work if the file can be fetched directly.",
+                "Paste a direct .sf2 file URL. For File Garden, use the file's Copy Link button so the URL starts with ",
+                span({ style: "font-family: monospace;" }, "https://file.garden/"),
+                ". ",
             ),
             div(
                 { style: "border: 1px solid var(--ui-widget-background); border-radius: 4px; padding: 0.75em;" },
@@ -70,32 +70,44 @@ export class SoundFontPrompt {
     };
 
     private _load = async (): Promise<void> => {
-        const url = this._urlInput.value.trim();
-        if (url.length == 0) {
+        const inputUrl = this._urlInput.value.trim();
+        if (inputUrl.length == 0) {
             this._status.textContent = "Paste a SoundFont URL first.";
             return;
         }
 
+        const url = normalizeSoundFontUrl(inputUrl);
+
         this._loadButton.disabled = true;
         this._urlInput.disabled = true;
-        this._status.textContent = "Loading SoundFont...";
+        this._status.textContent = "Downloading SoundFont...";
 
         try {
             const font = await SoundFontLibrary.loadFromUrl(url);
-            const firstPreset = font.getPresetInfos()[0];
+            const presets = font.getPresetInfos();
+
+            if (presets.length == 0) {
+                throw new Error("This SoundFont does not contain any playable presets.");
+            }
+
+            const firstPreset = presets[0];
             const instrument = this._getInstrument();
 
-            instrument.soundFontUrl = url;
+            instrument.soundFontUrl = font.id;
             instrument.soundFontName = font.name;
             instrument.soundFontBank = firstPreset.bank;
             instrument.soundFontPreset = firstPreset.preset;
 
+            this._urlInput.value = font.id;
+            this._status.textContent = "Loaded " + font.name;
             this._doc.notifier.changed();
-            this._close();
+
+            requestAnimationFrame(() => this._close());
         } catch (error) {
             this._status.textContent = error instanceof Error ? error.message : "Could not load this SoundFont.";
             this._loadButton.disabled = false;
             this._urlInput.disabled = false;
+            this._urlInput.focus();
         }
     };
 
