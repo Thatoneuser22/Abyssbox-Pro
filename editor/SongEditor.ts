@@ -1010,6 +1010,28 @@ export class SongEditor {
         this._portamentoModeRow,
     );
 
+    private readonly _ottBox: HTMLInputElement = input({ type: "checkbox", style: "width: 1em; padding: 0; margin: 0 0.5em;" });
+    private readonly _ottRow: HTMLDivElement = div(
+        { class: "selectRow" },
+        span({ class: "tip", title: "Multiband upward/downward compression." }, "OTT:"),
+        this._ottBox,
+    );
+
+    private readonly _ottAmountSlider: HTMLInputElement = input({ type: "range", min: "1", max: "63", value: "32", step: "1", style: "margin: 0; flex: 1;" });
+    private readonly _ottAmountValue: HTMLSpanElement = span({ style: `font-size: 80%; color: ${ColorConfig.secondaryText}; width: 3.5em; text-align: right;` }, "51%");
+    private readonly _ottAmountRow: HTMLDivElement = div(
+        { class: "selectRow" },
+        span({ class: "tip" }, "Amount:"),
+        this._ottAmountSlider,
+        this._ottAmountValue,
+    );
+
+    private readonly _ottSettingsGroup: HTMLDivElement = div(
+        { class: "editor-controls" },
+        this._ottRow,
+        this._ottAmountRow,
+    );
+
     private readonly _panDelaySlider: Slider = new Slider(input({ style: "margin: 0;", type: "range", min: "0", max: Config.modulators.dictionary["pan delay"].maxRawVol, value: "0", step: "1" }), this._doc, (oldValue: number, newValue: number) => new ChangePanDelay(this._doc, oldValue, newValue), false);
     private readonly _panDelayRow: HTMLElement = div({ class: "selectRow dropFader" }, span({ class: "tip", style: "margin-left:4px;", onclick: () => this._openPrompt("panDelay") }, "‣ Delay:"), this._panDelaySlider.container);
     private readonly _panDropdownGroup: HTMLElement = div({ class: "editor-controls", style: "display: none;" }, this._panDelayRow);
@@ -1277,6 +1299,7 @@ export class SongEditor {
         this._panSliderRow,
         this._panDropdownGroup,
         this._voiceSettingsGroup,
+        this._ottSettingsGroup,
         this._chipWaveSelectRow,
         this._chipNoiseSelectRow,
 	    this._useChipWaveAdvancedLoopControlsRow,
@@ -1858,6 +1881,8 @@ export class SongEditor {
         this._portamentoBox.addEventListener("input", this._whenSetPortamento);
         this._portamentoTimeSlider.addEventListener("input", this._whenSetPortamentoTime);
         this._portamentoModeSelect.addEventListener("change", this._whenSetPortamentoMode);
+        this._ottBox.addEventListener("input", this._whenSetOtt);
+        this._ottAmountSlider.addEventListener("input", this._whenSetOttAmount);
 
         //this._pitchedPresetSelect.addEventListener("change", this._whenSetPitchedPreset);
         //this._drumPresetSelect.addEventListener("change", this._whenSetDrumPreset);
@@ -3762,6 +3787,12 @@ export class SongEditor {
             this._voiceSettingsGroup.style.display = showVoiceSettings ? "" : "none";
             this._portamentoTimeRow.style.display = showVoiceSettings && instrument.portamento ? "" : "none";
             this._portamentoModeRow.style.display = showVoiceSettings && instrument.portamento ? "" : "none";
+
+            this._ottBox.checked = instrument.ottAmount > 0;
+            if (instrument.ottAmount > 0) this._ottAmountSlider.value = "" + instrument.ottAmount;
+            this._ottAmountValue.textContent = Math.round(instrument.ottAmount * 100 / 63) + "%";
+            this._ottSettingsGroup.style.display = showVoiceSettings ? "" : "none";
+            this._ottAmountRow.style.display = showVoiceSettings && instrument.ottAmount > 0 ? "" : "none";
             this._vibratoDepthSlider.updateValue(Math.round(instrument.vibratoDepth * 25));
             this._vibratoDelaySlider.updateValue(Math.round(instrument.vibratoDelay));
             this._vibratoSpeedSlider.updateValue(instrument.vibratoSpeed);
@@ -6292,6 +6323,29 @@ export class SongEditor {
     private _whenSetPortamentoMode = (): void => {
         const instrument: Instrument = this._doc.song.channels[this._doc.channel].instruments[this._doc.getCurrentInstrument()];
         instrument.portamentoMode = this._portamentoModeSelect.selectedIndex;
+        this._doc.notifier.changed();
+    }
+
+    private _whenSetOtt = (): void => {
+        const instrument: Instrument = this._doc.song.channels[this._doc.channel].instruments[this._doc.getCurrentInstrument()];
+
+        if (this._ottBox.checked) {
+            instrument.ottAmount = Math.max(1, parseInt(this._ottAmountSlider.value) || 32);
+            this._ottAmountSlider.value = "" + instrument.ottAmount;
+        } else {
+            instrument.ottAmount = 0;
+        }
+
+        this._ottAmountRow.style.display = instrument.ottAmount > 0 ? "" : "none";
+        this._ottAmountValue.textContent = Math.round(instrument.ottAmount * 100 / 63) + "%";
+        this._doc.notifier.changed();
+    }
+
+    private _whenSetOttAmount = (): void => {
+        const instrument: Instrument = this._doc.song.channels[this._doc.channel].instruments[this._doc.getCurrentInstrument()];
+        instrument.ottAmount = Math.max(1, Math.min(63, parseInt(this._ottAmountSlider.value) || 1));
+        this._ottBox.checked = true;
+        this._ottAmountValue.textContent = Math.round(instrument.ottAmount * 100 / 63) + "%";
         this._doc.notifier.changed();
     }
 

@@ -318,6 +318,7 @@ const enum SongTagCode {
 	stringSustain       = CharCode.I, // added in BeepBox URL version 9
     soundFont          = CharCode.J, // added in AbyssBox URL version 4
     voiceSettings       = CharCode.K, // added in AbyssBox URL version 5
+    ott                 = CharCode.NUM_0, // added in AbyssBox URL version 7
 	pan                 = CharCode.L, // added between 8 and 9, DEPRECATED
 	customChipWave      = CharCode.M, // added in JummBox URL version 1(?) for customChipWave
 	songDetails         = CharCode.N, // added in JummBox URL version 1(?) for songTitle
@@ -514,6 +515,12 @@ class BitFieldWriter {
     }
 }
 
+export const enum NoteType {
+    normal,
+    slide,
+    portamento,
+}
+
 export interface NotePin {
     interval: number;
     time: number;
@@ -530,6 +537,7 @@ export class Note {
     public start: number;
     public end: number;
     public continuesLastPattern: boolean;
+    public noteType: NoteType = NoteType.normal;
 
     public constructor(pitch: number, start: number, end: number, size: number, fadeout: boolean = false) {
         this.pitches = [pitch];
@@ -537,6 +545,7 @@ export class Note {
         this.start = start;
         this.end = end;
         this.continuesLastPattern = false;
+        this.noteType = NoteType.normal;
     }
 
     public pickMainInterval(): number {
@@ -574,6 +583,7 @@ export class Note {
             newNote.pins.push(makeNotePin(pin.interval, pin.time, pin.size));
         }
         newNote.continuesLastPattern = this.continuesLastPattern;
+        newNote.noteType = this.noteType;
         return newNote;
     }
 
@@ -626,6 +636,12 @@ export class Pattern {
                 "pitches": note.pitches,
                 "points": pointArray,
             };
+            if (note.noteType == NoteType.slide) {
+                noteObject["noteType"] = "slide";
+            } else if (note.noteType == NoteType.portamento) {
+                noteObject["noteType"] = "portamento";
+            }
+
             if (note.start == 0) {
                 noteObject["continuesLastPattern"] = note.continuesLastPattern;
             }
@@ -672,6 +688,12 @@ export class Pattern {
                 }
 
                 const note: Note = new Note(0, 0, 0, 0);
+                const importedNoteType: any = noteObject["noteType"];
+                note.noteType = importedNoteType == "slide" || importedNoteType == NoteType.slide
+                    ? NoteType.slide
+                    : importedNoteType == "portamento" || importedNoteType == "porta" || importedNoteType == NoteType.portamento
+                        ? NoteType.portamento
+                        : NoteType.normal;
                 note.pitches = [];
                 note.pins = [];
 
@@ -1666,6 +1688,7 @@ export class Instrument {
     public portamento: boolean = false;
     public portamentoTicks: number = 6;
     public portamentoMode: number = 0; // 0 always, 1 legato
+    public ottAmount: number = 0; // 0..63
     constructor(isNoiseChannel: boolean, isModChannel: boolean) {
 
         // @jummbus - My screed on how modulator arrays for instruments work, for the benefit of myself in the future, or whoever else.
@@ -1797,6 +1820,7 @@ export class Instrument {
         this.portamento = false;
         this.portamentoTicks = 6;
         this.portamentoMode = 0;
+        this.ottAmount = 0;
 
         switch (type) {
             case InstrumentType.chip:
@@ -2046,6 +2070,7 @@ export class Instrument {
         instrumentObject["portamento"] = this.portamento;
         instrumentObject["portamentoTicks"] = this.portamentoTicks;
         instrumentObject["portamentoMode"] = this.portamentoMode == 1 ? "legato" : "always";
+        instrumentObject["ott"] = Math.round(this.ottAmount * 100 / 63);
 
         for (let i: number = 0; i < Config.filterMorphCount; i++) {
             if (this.eqSubFilters[i] != null)
@@ -2325,6 +2350,7 @@ export class Instrument {
         this.portamento = instrumentObject["portamento"] == true;
         this.portamentoTicks = clamp(1, 49, instrumentObject["portamentoTicks"] == undefined ? 6 : Math.round(+instrumentObject["portamentoTicks"]));
         this.portamentoMode = instrumentObject["portamentoMode"] == "legato" || instrumentObject["portamentoMode"] == 1 ? 1 : 0;
+        this.ottAmount = clamp(0, 64, Math.round((+instrumentObject["ott"] || 0) * 63 / 100));
 
         if (instrumentObject["preset"] != undefined) {
             this.preset = instrumentObject["preset"] >>> 0;
@@ -3153,6 +3179,24 @@ export class Instrument {
         };
     }
 
+    public getTransitionForNote(note: Note | null): Transition {
+        const transition: Transition = this.getTransition();
+
+        if (note == null || note.noteType != NoteType.portamento || this.type == InstrumentType.mod) {
+            return transition;
+        }
+
+        return {
+            index: transition.index,
+            name: transition.name,
+            isSeamless: true,
+            continues: transition.continues,
+            slides: true,
+            slideTicks: Math.max(1, this.portamentoTicks),
+            includeAdjacentPatterns: true,
+        };
+    }
+
     public getFadeInSeconds(): number {
         return (this.type == InstrumentType.drumset) ? 0.0 : Synth.fadeInSettingToSeconds(this.fadeIn);
     }
@@ -3191,7 +3235,7 @@ export class Song {
     private static readonly _oldestUltraBoxVersion: number = 1;
     private static readonly _latestUltraBoxVersion: number = 6;
     private static readonly _oldestAbyssBoxVersion: number = 1;
-    private static readonly _latestAbyssBoxVersion: number = 6;
+    private static readonly _latestAbyssBoxVersion: number = 8;
     // One-character variant detection at the start of URL to distinguish variants such as JummBox, Or Goldbox. "j" and "g" respectively
 	//also "u" is ultrabox lol
     private static readonly _variant = 0x61; //"a" ~ abyssbox
@@ -3538,6 +3582,10 @@ export class Song {
                         base64IntToCharCode[voiceFlags],
                         base64IntToCharCode[Math.max(1, Math.min(48, instrument.portamentoTicks))],
                     );
+                }
+
+                if (instrument.ottAmount > 0) {
+                    buffer.push(SongTagCode.ott, base64IntToCharCode[Math.max(0, Math.min(63, instrument.ottAmount))]);
                 }
 
                 buffer.push(SongTagCode.eqFilter);
@@ -4096,6 +4144,8 @@ export class Song {
                                 lastPitch = pitch;
                             }
                         }
+
+                        bits.write(2, note.noteType);
 
                         if (note.start == 0) {
                             bits.write(1, note.continuesLastPattern ? 1 : 0);
@@ -4656,6 +4706,10 @@ export class Song {
                 instrument.portamento = (voiceFlags & (1 << 2)) != 0;
                 instrument.portamentoMode = (voiceFlags >> 3) & 0x1;
                 instrument.portamentoTicks = Math.max(1, Math.min(48, base64CharCodeToInt[compressed.charCodeAt(charIndex++)]));
+            } break;
+            case SongTagCode.ott: {
+                const instrument = this.channels[instrumentChannelIterator].instruments[instrumentIndexIterator];
+                instrument.ottAmount = base64CharCodeToInt[compressed.charCodeAt(charIndex++)];
             } break;
             case SongTagCode.preset: {
                 const presetValue: number = (base64CharCodeToInt[compressed.charCodeAt(charIndex++)] << 6) | (base64CharCodeToInt[compressed.charCodeAt(charIndex++)]);
@@ -6281,6 +6335,12 @@ export class Song {
                                 }
                                 note.pins.length = pinCount;
 
+                                if (fromAbyssBox && !beforeEight) {
+                                    note.noteType = validateRange(NoteType.normal, NoteType.portamento, bits.read(2));
+                                } else {
+                                    note.noteType = NoteType.normal;
+                                }
+
                                 if (note.start == 0) {
                                     if (!((beforeNine && fromBeepBox) || (beforeFive && fromJummBox)||(beforeFour&&fromGoldBox))) {
                                         note.continuesLastPattern = (bits.read(1) == 1);
@@ -7663,7 +7723,7 @@ class EnvelopeComputer {
     public computeEnvelopes(instrument: Instrument, currentPart: number, tickTimeStart: number, tickTimeStartReal: number, secondsPerTick: number, tone: Tone | null, timeScale: number, song: Song | null, instrumentState: InstrumentState): void {
         const secondsPerTickUnscaled: number = secondsPerTick;
         secondsPerTick *= timeScale;
-        const transition: Transition = instrument.getTransition();
+        const transition: Transition = instrument.getTransitionForNote(tone == null ? null : tone.note);
         if (tone != null && tone.atNoteStart && !transition.continues && !tone.forceContinueAtStart) {
             this.prevNoteSecondsEnd = this.noteSecondsEnd;
             this.prevNoteSecondsEndUnscaled = this.noteSecondsEndUnscaled;
@@ -8049,6 +8109,16 @@ class InstrumentState {
 
     public volumeScale: number = 0;
     public aliases: boolean = false;
+
+    public ottAmount: number = 0.0;
+    public ottLow: number = 0.0;
+    public ottHigh: number = 0.0;
+    public ottLowEnv: number = 0.0;
+    public ottMidEnv: number = 0.0;
+    public ottHighEnv: number = 0.0;
+    public ottLowCoeff: number = 0.0;
+    public ottHighCoeff: number = 0.0;
+
     public arpTime: number = 0;
     public vibratoTime: number = 0;
     public nextVibratoTime: number = 0;
@@ -8308,6 +8378,12 @@ class InstrumentState {
         this.volumeScale = 1.0;
         this.aliases = false;
 
+        this.ottLow = 0.0;
+        this.ottHigh = 0.0;
+        this.ottLowEnv = 0.0;
+        this.ottMidEnv = 0.0;
+        this.ottHighEnv = 0.0;
+
         this.invertWave = false;
 
         this.awake = false;
@@ -8370,6 +8446,19 @@ class InstrumentState {
         this.allocateNecessaryBuffers(synth, instrument, samplesPerTick);
 
         const samplesPerSecond: number = synth.samplesPerSecond;
+
+        this.ottAmount = instrument.ottAmount / 63.0;
+        this.ottLowCoeff = 1.0 - Math.exp(-2.0 * Math.PI * 180.0 / samplesPerSecond);
+        this.ottHighCoeff = 1.0 - Math.exp(-2.0 * Math.PI * 2500.0 / samplesPerSecond);
+
+        if (this.ottAmount <= 0.0) {
+            this.ottLow = 0.0;
+            this.ottHigh = 0.0;
+            this.ottLowEnv = 0.0;
+            this.ottMidEnv = 0.0;
+            this.ottHighEnv = 0.0;
+        }
+
         this.updateWaves(instrument, samplesPerSecond);
 
         const ticksIntoBar: number = synth.getTicksIntoBar();
@@ -10757,6 +10846,10 @@ export class Synth {
     // Returns the chord type of the instrument in the adjacent pattern if it is compatible for a
     // seamless transition across patterns, otherwise returns null.
     private adjacentPatternHasCompatibleInstrumentTransition(song: Song, channel: Channel, pattern: Pattern, otherPattern: Pattern, instrumentIndex: number, transition: Transition, chord: Chord, note: Note, otherNote: Note, forceContinue: boolean): Chord | null {
+        if (note.noteType == NoteType.portamento) {
+            return chord;
+        }
+
         if (song.patternInstruments && otherPattern.instruments.indexOf(instrumentIndex) == -1) {
             // The adjacent pattern does not contain the same instrument as the current pattern.
 
@@ -10963,6 +11056,11 @@ export class Synth {
                 for (let i: number = 0; i < pattern.notes.length; i++) {
                     const candidate: Note = pattern.notes[i];
 
+                    // FL-style slide notes are controller events. They do not create a voice.
+                    if (candidate.noteType == NoteType.slide) {
+                        continue;
+                    }
+
                     if (candidate.start < latestEnd) {
                         patternHasOverlaps = true;
                     }
@@ -11002,6 +11100,44 @@ export class Synth {
             } else {
                 channelState.singleSeamlessInstrument = null;
             }
+
+            const getPreviousPlayableNote = (target: Note): Note | null => {
+                if (pattern == null) return null;
+
+                let previous: Note | null = null;
+
+                for (const candidate of pattern.notes) {
+                    if (candidate == target || candidate.noteType == NoteType.slide) continue;
+                    if (candidate.start >= target.start) continue;
+
+                    if (
+                        previous == null
+                        || candidate.start > previous.start
+                        || (candidate.start == previous.start && candidate.end > previous.end)
+                    ) {
+                        previous = candidate;
+                    }
+                }
+
+                return previous;
+            };
+
+            const getClosestPitchIndex = (source: Note, targetPitch: number): number => {
+                let bestIndex: number = 0;
+                let bestDistance: number = Number.POSITIVE_INFINITY;
+
+                for (let i: number = 0; i < source.pitches.length; i++) {
+                    const sourcePitch: number = source.pitches[i] + source.pins[source.pins.length - 1].interval;
+                    const distance: number = Math.abs(sourcePitch - targetPitch);
+
+                    if (distance < bestDistance) {
+                        bestDistance = distance;
+                        bestIndex = i;
+                    }
+                }
+
+                return bestIndex;
+            };
 
             for (let instrumentIndex: number = 0; instrumentIndex < channel.instruments.length; instrumentIndex++) {
                 const instrumentState: InstrumentState = channelState.instruments[instrumentIndex];
@@ -11080,9 +11216,9 @@ export class Synth {
                             tone.note = activeNote;
                             tone.noteStartPart = activeNote.start;
                             tone.noteEndPart = activeNote.end;
-                            tone.prevNote = null;
+                            tone.prevNote = activeNote.noteType == NoteType.portamento ? getPreviousPlayableNote(activeNote) : null;
                             tone.nextNote = null;
-                            tone.prevNotePitchIndex = 0;
+                            tone.prevNotePitchIndex = tone.prevNote == null ? 0 : getClosestPitchIndex(tone.prevNote, filteredPitches[0]);
                             tone.nextNotePitchIndex = 0;
                             tone.atNoteStart = atNoteStart;
                             tone.passedEndOfNote = false;
@@ -11105,9 +11241,9 @@ export class Synth {
                                 tone.note = activeNote;
                                 tone.noteStartPart = activeNote.start;
                                 tone.noteEndPart = activeNote.end;
-                                tone.prevNote = null;
+                                tone.prevNote = activeNote.noteType == NoteType.portamento ? getPreviousPlayableNote(activeNote) : null;
                                 tone.nextNote = null;
-                                tone.prevNotePitchIndex = pitchIndex;
+                                tone.prevNotePitchIndex = tone.prevNote == null ? pitchIndex : getClosestPitchIndex(tone.prevNote, pitch);
                                 tone.nextNotePitchIndex = pitchIndex;
                                 tone.atNoteStart = atNoteStart;
                                 tone.passedEndOfNote = false;
@@ -11123,22 +11259,41 @@ export class Synth {
                     let nextNoteForThisInstrument: Note | null = nextNote;
 
                     if (instrument.voiceMode != 0 && activeNotes.length > 1 && note != null) {
-                        const noteIndex: number = activeNotes.indexOf(note);
+                        const orderedActiveNotes: Note[] = activeNotes.slice().sort((a, b) => {
+                            if (a.start != b.start) return a.start - b.start;
+                            return a.pitches[0] - b.pitches[0];
+                        });
+
+                        const noteIndex: number = orderedActiveNotes.indexOf(note);
                         if (noteIndex > 0) {
-                            prevNoteForThisInstrument = activeNotes[noteIndex - 1];
+                            prevNoteForThisInstrument = orderedActiveNotes[noteIndex - 1];
                         }
                     }
 
                     const alwaysPortamento: boolean = instrument.portamento && instrument.portamentoMode == 0;
-                    if (!alwaysPortamento && prevNoteForThisInstrument != null && prevNoteForThisInstrument.end != note.start) {
+                    const notePortamento: boolean = note.noteType == NoteType.portamento;
+                    const overlappingLegato: boolean =
+                        prevNoteForThisInstrument != null
+                        && instrument.voiceMode != 0
+                        && prevNoteForThisInstrument.start <= note.start
+                        && prevNoteForThisInstrument.end >= note.start;
+
+                    if (
+                        !alwaysPortamento
+                        && !notePortamento
+                        && !overlappingLegato
+                        && prevNoteForThisInstrument != null
+                        && prevNoteForThisInstrument.end != note.start
+                    ) {
                         prevNoteForThisInstrument = null;
                     }
+
                     if (nextNoteForThisInstrument != null && nextNoteForThisInstrument.start != note.end) {
                         nextNoteForThisInstrument = null;
                     }
 
                     const partsPerBar: Number = Config.partsPerBeat * song.beatsPerBar;
-                    const transition: Transition = instrument.getTransition();
+                    const transition: Transition = instrument.getTransitionForNote(note);
                     const chord: Chord = instrument.getChord();
                     const useStrumSpeed: boolean = chord.strumParts > 0;
                     let forceContinueAtStart: boolean = false;
@@ -11238,7 +11393,7 @@ export class Synth {
                         tone.forceContinueAtEnd = forceContinueAtEnd;
                         this.computeTone(song, channelIndex, samplesPerTick, tone, false, false);
                     } else {
-                        const transition: Transition = instrument.getTransition();
+                        const transition: Transition = instrument.getTransitionForNote(note);
 
                         if (((transition.isSeamless && !transition.slides && chord.strumParts == 0) || forceContinueAtStart) && (Config.ticksPerPart * note.start == currentTick) && prevNoteForThisInstrument != null) {
                             this.moveTonesIntoOrderedTempMatchedList(toneList, filteredPitches);
@@ -11412,7 +11567,7 @@ export class Synth {
         if (!instrumentState.computed) {
             instrumentState.compute(this, instrument, samplesPerTick, roundedSamplesPerTick, tone, channelIndex, tone.instrumentIndex);
         }
-        const transition: Transition = instrument.getTransition();
+        const transition: Transition = instrument.getTransitionForNote(tone.note);
         const chord: Chord = instrument.getChord();
         const chordExpression: number = chord.singleTone ? 1.0 : Synth.computeChordExpression(tone.chordSize);
         const isNoiseChannel: boolean = song.getChannelIsNoise(channelIndex);
@@ -11424,6 +11579,50 @@ export class Synth {
         const partTimeStart: number = (ticksIntoBar) / Config.ticksPerPart;
         const partTimeEnd: number = (ticksIntoBar + 1.0) / Config.ticksPerPart;
         const currentPart: number = this.getCurrentPart();
+
+        let specialNoteSlideOffsetStart: number = 0.0;
+        let specialNoteSlideOffsetEnd: number = 0.0;
+
+        if (!isNoiseChannel && tone.note != null && tone.note.noteType != NoteType.slide) {
+            const currentPattern: Pattern | null = song.getPattern(channelIndex, this.bar);
+
+            if (currentPattern != null) {
+                let latestSlide: Note | null = null;
+
+                for (const candidate of currentPattern.notes) {
+                    if (candidate.noteType != NoteType.slide) continue;
+                    if (candidate.start < tone.note.start || candidate.start >= tone.note.end) continue;
+                    if (candidate.start > partTimeStart) continue;
+
+                    if (latestSlide == null || candidate.start >= latestSlide.start) {
+                        latestSlide = candidate;
+                    }
+                }
+
+                if (latestSlide != null) {
+                    let referencePitch: number = Number.NEGATIVE_INFINITY;
+
+                    for (const candidate of currentPattern.notes) {
+                        if (candidate.noteType == NoteType.slide) continue;
+                        if (candidate.start > latestSlide.start || candidate.end <= latestSlide.start) continue;
+
+                        for (const pitch of candidate.pitches) {
+                            referencePitch = Math.max(referencePitch, pitch);
+                        }
+                    }
+
+                    if (referencePitch != Number.NEGATIVE_INFINITY) {
+                        const targetOffset: number = latestSlide.pitches[0] - referencePitch;
+                        const slideLength: number = Math.max(1.0 / Config.ticksPerPart, latestSlide.end - latestSlide.start);
+                        const progressStart: number = Math.max(0.0, Math.min(1.0, (partTimeStart - latestSlide.start) / slideLength));
+                        const progressEnd: number = Math.max(0.0, Math.min(1.0, (partTimeEnd - latestSlide.start) / slideLength));
+
+                        specialNoteSlideOffsetStart = targetOffset * progressStart;
+                        specialNoteSlideOffsetEnd = targetOffset * progressEnd;
+                    }
+                }
+            }
+        }
 
         let specialIntervalMult: number = 1.0;
         tone.specialIntervalExpressionMult = 1.0;
@@ -11690,6 +11889,9 @@ export class Synth {
                 }
             }
         }
+
+        intervalStart += specialNoteSlideOffsetStart;
+        intervalEnd += specialNoteSlideOffsetEnd;
 
         if (effectsIncludePitchShift(instrument.effects)) {
             let pitchShift: number = Config.justIntonationSemitones[instrument.pitchShift] / intervalScale;
@@ -13252,6 +13454,7 @@ export class Synth {
         const usesPhaser: boolean = effectsIncludePhaser(instrumentState.effects);
         const usesInvertWave: boolean = effectsIncludeInvertWave(instrumentState.effects) && instrumentState.invertWave;
         const usesGranular: boolean = effectsIncludeGranular(instrumentState.effects);
+        const usesOtt: boolean = instrumentState.ottAmount > 0.0;
         let signature: number = 0; if (usesDistortion) signature = signature | 1;
         signature = signature << 1; if (usesBitcrusher) signature = signature | 1;
         signature = signature << 1; if (usesEqFilter) signature = signature | 1;
@@ -13263,6 +13466,7 @@ export class Synth {
         signature = signature << 1; if (usesPhaser) signature = signature | 1;
         signature = signature << 1; if (usesInvertWave) signature = signature | 1;
         signature = signature << 1; if (usesGranular) signature = signature | 1;
+        signature = signature << 1; if (usesOtt) signature = signature | 1;
 
         let effectsFunction: Function = Synth.effectsFunctionCache[signature];
         if (effectsFunction == undefined) {
@@ -13412,6 +13616,19 @@ export class Synth {
 				
 				let eqFilterVolume = +instrumentState.eqFilterVolume;
 				const eqFilterVolumeDelta = +instrumentState.eqFilterVolumeDelta;`
+
+            if (usesOtt) {
+                effectsSource += `
+
+                const ottAmount = +instrumentState.ottAmount;
+                const ottLowCoeff = +instrumentState.ottLowCoeff;
+                const ottHighCoeff = +instrumentState.ottHighCoeff;
+                let ottLow = +instrumentState.ottLow;
+                let ottHigh = +instrumentState.ottHigh;
+                let ottLowEnv = +instrumentState.ottLowEnv;
+                let ottMidEnv = +instrumentState.ottMidEnv;
+                let ottHighEnv = +instrumentState.ottHighEnv;`
+            }
 
             if (usesPanning) {
                 effectsSource += `
@@ -13712,6 +13929,48 @@ export class Synth {
 					sample *= eqFilterVolume;
 					eqFilterVolume += eqFilterVolumeDelta;`
 
+            if (usesOtt) {
+                effectsSource += `
+
+                    ottLow += ottLowCoeff * (sample - ottLow);
+                    ottHigh += ottHighCoeff * (sample - ottHigh);
+
+                    const ottLowBand = ottLow;
+                    const ottMidBand = ottHigh - ottLow;
+                    const ottHighBand = sample - ottHigh;
+
+                    const ottLowAbs = Math.abs(ottLowBand);
+                    const ottMidAbs = Math.abs(ottMidBand);
+                    const ottHighAbs = Math.abs(ottHighBand);
+
+                    const ottAttack = 0.12;
+                    const ottRelease = 0.0025;
+
+                    ottLowEnv += (ottLowAbs > ottLowEnv ? ottAttack : ottRelease) * (ottLowAbs - ottLowEnv);
+                    ottMidEnv += (ottMidAbs > ottMidEnv ? ottAttack : ottRelease) * (ottMidAbs - ottMidEnv);
+                    ottHighEnv += (ottHighAbs > ottHighEnv ? ottAttack : ottRelease) * (ottHighAbs - ottHighEnv);
+
+                    let ottLowGain = 1.0;
+                    let ottMidGain = 1.0;
+                    let ottHighGain = 1.0;
+
+                    if (ottLowEnv > 0.20) ottLowGain = (0.20 + (ottLowEnv - 0.20) * 0.28) / Math.max(ottLowEnv, 0.000001);
+                    else if (ottLowEnv < 0.05) ottLowGain = Math.min(3.2, 0.05 / Math.max(ottLowEnv, 0.016));
+
+                    if (ottMidEnv > 0.18) ottMidGain = (0.18 + (ottMidEnv - 0.18) * 0.24) / Math.max(ottMidEnv, 0.000001);
+                    else if (ottMidEnv < 0.045) ottMidGain = Math.min(3.6, 0.045 / Math.max(ottMidEnv, 0.014));
+
+                    if (ottHighEnv > 0.15) ottHighGain = (0.15 + (ottHighEnv - 0.15) * 0.22) / Math.max(ottHighEnv, 0.000001);
+                    else if (ottHighEnv < 0.035) ottHighGain = Math.min(4.0, 0.035 / Math.max(ottHighEnv, 0.011));
+
+                    const ottWet =
+                        ottLowBand * ottLowGain
+                        + ottMidBand * ottMidGain
+                        + ottHighBand * ottHighGain;
+
+                    sample = sample * (1.0 - ottAmount) + ottWet * ottAmount;`
+            }
+
             if (usesPanning) {
                 effectsSource += `
 					
@@ -13867,6 +14126,16 @@ export class Synth {
 				
 				// Avoid persistent denormal or NaN values in the delay buffers and filter history.
 				const epsilon = (1.0e-24);`
+
+            if (usesOtt) {
+                effectsSource += `
+
+                instrumentState.ottLow = Math.abs(ottLow) < epsilon ? 0.0 : ottLow;
+                instrumentState.ottHigh = Math.abs(ottHigh) < epsilon ? 0.0 : ottHigh;
+                instrumentState.ottLowEnv = Math.abs(ottLowEnv) < epsilon ? 0.0 : ottLowEnv;
+                instrumentState.ottMidEnv = Math.abs(ottMidEnv) < epsilon ? 0.0 : ottMidEnv;
+                instrumentState.ottHighEnv = Math.abs(ottHighEnv) < epsilon ? 0.0 : ottHighEnv;`
+            }
 
             if (usesDelays) {
                 effectsSource += `
