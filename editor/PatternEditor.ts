@@ -94,6 +94,17 @@ export class PatternEditor {
     // @TODO: Make this themeable?
     private readonly _svgNoteRangeIndicatorOverlay: SVGPathElement = SVG.path({ fill: ColorConfig.dimmedArea, "fill-opacity": "0.8", stroke: "none", "pointer-events": "none" });
     public modDragValueLabel: HTMLDivElement = HTML.div({ width: "90", "text-anchor": "start", contenteditable: "true", style: "display: flex, justify-content: center; align-items:center; position:absolute; pointer-events: none;", "dominant-baseline": "central", });
+
+    private readonly _independentNotesInput: HTMLInputElement = HTML.input({ type: "checkbox" });
+    private readonly _independentNotesControl: HTMLLabelElement = HTML.label(
+        {
+            style: "display: none; position: absolute; right: 6px; top: 6px; z-index: 4; align-items: center; gap: 5px; padding: 4px 7px; border-radius: 4px; background: rgba(0, 0, 0, 0.55); font-size: 11px; cursor: pointer; user-select: none;",
+            title: "Keep notes on different pitches separate instead of combining them into one chord note.",
+        },
+        this._independentNotesInput,
+        HTML.span({}, "Independent Notes"),
+    );
+
     public _svg: SVGSVGElement = SVG.svg({ id:'firstImage', style: `background-image: url(${getLocalStorageItem("customTheme", "")}); background-repeat: no-repeat; background-size: 100% 100%; background-color: ${ColorConfig.editorBackground}; touch-action: none; position: absolute;`, width: "100%", height: "100%" },
 	SVG.defs(
             this._svgNoteBackground,
@@ -107,7 +118,12 @@ export class PatternEditor {
         this._svgPreview,
         this._svgPlayhead,
     );
-    public readonly container: HTMLDivElement = HTML.div({ style: "height: 100%; overflow:hidden; position: relative; flex-grow: 1;" }, this._svg, this.modDragValueLabel);
+    public readonly container: HTMLDivElement = HTML.div(
+        { style: "height: 100%; overflow:hidden; position: relative; flex-grow: 1;" },
+        this._svg,
+        this.modDragValueLabel,
+        this._independentNotesControl,
+    );
 
     private readonly _defaultModBorder: number = 34;
     private readonly _backgroundPitchRows: SVGRectElement[] = [];
@@ -202,6 +218,15 @@ export class PatternEditor {
     private _followPlayheadBar: number = -1;
 
     constructor(private _doc: SongDocument, private _interactive: boolean, private _barOffset: number) {
+        this._independentNotesInput.checked = getLocalStorageItem("independentNotes", "true") != "false";
+        this._independentNotesControl.style.display = this._interactive ? "flex" : "none";
+        this._independentNotesInput.addEventListener("change", () => {
+            localStorage.setItem("independentNotes", this._independentNotesInput.checked ? "true" : "false");
+            this._updateCursorStatus();
+            this._updatePreview();
+            this._doc.notifier.notifyWatchers();
+        });
+
         for (let i: number = 0; i < Config.pitchesPerOctave; i++) {
             const rectangle: SVGRectElement = SVG.rect();
             rectangle.setAttribute("x", "1");
@@ -253,6 +278,39 @@ export class PatternEditor {
     private _getMaxPitch(): number {
 		return this._doc.song.getChannelIsMod(this._doc.channel) ? Config.modCount - 1 : ( this._doc.song.getChannelIsNoise(this._doc.channel) ? Config.drumCount - 1 : Config.maxPitch );
 	}
+
+    private _independentNotesEnabled(): boolean {
+        return this._independentNotesInput.checked
+            && !this._doc.song.getChannelIsNoise(this._doc.channel)
+            && !this._doc.song.getChannelIsMod(this._doc.channel);
+    }
+
+    private _noteMatchesPitchAtPart(note: Note, part: number, pitch: number): boolean {
+        if (part < note.start || part >= note.end) return false;
+
+        const relativePart: number = part - note.start;
+        let interval: number = note.pins[0].interval;
+
+        for (let i: number = 1; i < note.pins.length; i++) {
+            const previous: NotePin = note.pins[i - 1];
+            const next: NotePin = note.pins[i];
+
+            if (relativePart <= next.time) {
+                const length: number = next.time - previous.time;
+                const ratio: number = length <= 0 ? 0 : (relativePart - previous.time) / length;
+                interval = previous.interval + (next.interval - previous.interval) * Math.max(0, Math.min(1, ratio));
+                break;
+            }
+
+            interval = next.interval;
+        }
+
+        for (const basePitch of note.pitches) {
+            if (Math.abs(basePitch + interval - pitch) < 0.75) return true;
+        }
+
+        return false;
+    }
 
 
     private _validateModDragLabelInput = (event: Event): void => {
@@ -334,41 +392,75 @@ export class PatternEditor {
         let foundNote: boolean = false;
 
         if (this._pattern != null) {
-            for (const note of this._pattern.notes) {
-                if (note.end <= this._cursor.exactPart) {
-                    if (this._doc.song.getChannelIsMod(this._doc.channel)) {
-                        if (note.pitches[0] == Math.floor(this._findMousePitch(this._mouseY))) {
+            if (this._independentNotesEnabled()) {
+                const mousePitch: number = Math.floor(this._findMousePitch(this._mouseY));
+                let insertIndex: number = 0;
+
+                for (let i: number = 0; i < this._pattern.notes.length; i++) {
+                    const note: Note = this._pattern.notes[i];
+
+                    if (note.start < this._cursor.part || (note.start == this._cursor.part && note.pitches[0] <= mousePitch)) {
+                        insertIndex = i + 1;
+                    }
+
+                    const matchesPitch: boolean = this._noteMatchesPitchAtPart(note, this._cursor.exactPart, mousePitch)
+                        || note.pitches.indexOf(mousePitch) != -1;
+
+                    if (!matchesPitch) continue;
+
+                    if (note.end <= this._cursor.exactPart) {
+                        if (this._cursor.prevNote == null || note.end >= this._cursor.prevNote.end) {
                             this._cursor.prevNote = note;
                         }
-                        if (!foundNote)
-                            this._cursor.curIndex++;
-
-                    } else {
-                        this._cursor.prevNote = note;
-                        this._cursor.curIndex++;
-                    }
-                } else if (note.start <= this._cursor.exactPart && note.end > this._cursor.exactPart) {
-                    if (this._doc.song.getChannelIsMod(this._doc.channel)) {
-                        if (note.pitches[0] == Math.floor(this._findMousePitch(this._mouseY))) {
-                            this._cursor.curNote = note;
-                            foundNote = true;
-                        }
-                        // Only increment index if the sought note has been found... or if this note truly starts before the other
-                        else if (!foundNote || (this._cursor.curNote != null && note.start < this._cursor.curNote.start))
-                            this._cursor.curIndex++;
-                    }
-                    else {
+                    } else if (note.start <= this._cursor.exactPart && note.end > this._cursor.exactPart) {
                         this._cursor.curNote = note;
+                        this._cursor.curIndex = i;
+                        foundNote = true;
+                    } else if (note.start > this._cursor.exactPart && this._cursor.nextNote == null) {
+                        this._cursor.nextNote = note;
                     }
-                } else if (note.start > this._cursor.exactPart) {
-                    if (this._doc.song.getChannelIsMod(this._doc.channel)) {
-                        if (note.pitches[0] == Math.floor(this._findMousePitch(this._mouseY))) {
+                }
+
+                if (!foundNote) {
+                    this._cursor.curIndex = insertIndex;
+                }
+            } else {
+                for (const note of this._pattern.notes) {
+                    if (note.end <= this._cursor.exactPart) {
+                        if (this._doc.song.getChannelIsMod(this._doc.channel)) {
+                            if (note.pitches[0] == Math.floor(this._findMousePitch(this._mouseY))) {
+                                this._cursor.prevNote = note;
+                            }
+                            if (!foundNote)
+                                this._cursor.curIndex++;
+
+                        } else {
+                            this._cursor.prevNote = note;
+                            this._cursor.curIndex++;
+                        }
+                    } else if (note.start <= this._cursor.exactPart && note.end > this._cursor.exactPart) {
+                        if (this._doc.song.getChannelIsMod(this._doc.channel)) {
+                            if (note.pitches[0] == Math.floor(this._findMousePitch(this._mouseY))) {
+                                this._cursor.curNote = note;
+                                foundNote = true;
+                            }
+                            // Only increment index if the sought note has been found... or if this note truly starts before the other
+                            else if (!foundNote || (this._cursor.curNote != null && note.start < this._cursor.curNote.start))
+                                this._cursor.curIndex++;
+                        }
+                        else {
+                            this._cursor.curNote = note;
+                        }
+                    } else if (note.start > this._cursor.exactPart) {
+                        if (this._doc.song.getChannelIsMod(this._doc.channel)) {
+                            if (note.pitches[0] == Math.floor(this._findMousePitch(this._mouseY))) {
+                                this._cursor.nextNote = note;
+                                break;
+                            }
+                        } else {
                             this._cursor.nextNote = note;
                             break;
                         }
-                    } else {
-                        this._cursor.nextNote = note;
-                        break;
                     }
                 }
             }
@@ -1985,8 +2077,12 @@ export class PatternEditor {
                         sequence.append(new ChangeEnsurePatternExists(this._doc, this._doc.channel, this._doc.bar));
                         const pattern: Pattern | null = this._doc.getCurrentPattern(this._barOffset);
                         if (pattern == null) throw new Error();
-                        // Using parameter skipNote to force proper "collision" checking vis-a-vis pitch for mod channels.
-                        sequence.append(new ChangeNoteTruncate(this._doc, pattern, start, end, new Note(this._cursor.pitch, 0, 0, 0)));
+                        // Independent Notes allows separate pitches to overlap in time.
+                        if (!this._independentNotesEnabled()) {
+                            // Using parameter skipNote to force proper "collision" checking vis-a-vis pitch for mod channels.
+                            sequence.append(new ChangeNoteTruncate(this._doc, pattern, start, end, new Note(this._cursor.pitch, 0, 0, 0)));
+                        }
+
                         let i: number;
                         for (i = 0; i < pattern.notes.length; i++) {
                             if (pattern.notes[i].start >= end) break;
@@ -2214,7 +2310,7 @@ export class PatternEditor {
                 this._doc.record(this._dragChange);
                 this._dragChange = null;
                 // Need to re-sort the notes by start time as they might change order if user drags them around.
-                if (this._pattern != null && this._doc.song.getChannelIsMod(this._doc.channel)) this._pattern.notes.sort(function (a, b) { return (a.start == b.start) ? a.pitches[0] - b.pitches[0] : a.start - b.start; });
+                if (this._pattern != null && (this._doc.song.getChannelIsMod(this._doc.channel) || this._independentNotesEnabled())) this._pattern.notes.sort(function (a, b) { return (a.start == b.start) ? a.pitches[0] - b.pitches[0] : a.start - b.start; });
 
             } else if (this._draggingStartOfSelection || this._draggingEndOfSelection || this._shiftHeld) {
                 this._setPatternSelection(this._dragChange);
@@ -2223,7 +2319,7 @@ export class PatternEditor {
                 this._doc.record(this._dragChange);
                 this._dragChange = null;
                 // Need to re-sort the notes by start time as they might change order if user drags them around.
-                if (this._pattern != null && this._doc.song.getChannelIsMod(this._doc.channel)) this._pattern.notes.sort(function (a, b) { return (a.start == b.start) ? a.pitches[0] - b.pitches[0] : a.start - b.start; });
+                if (this._pattern != null && (this._doc.song.getChannelIsMod(this._doc.channel) || this._independentNotesEnabled())) this._pattern.notes.sort(function (a, b) { return (a.start == b.start) ? a.pitches[0] - b.pitches[0] : a.start - b.start; });
 
             } else {
 

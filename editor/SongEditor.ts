@@ -972,6 +972,44 @@ export class SongEditor {
         span({ class: "tip", tabindex: "0", style: "height:1em; font-size: smaller;", onclick: () => this._openPrompt("pan") }, "Pan: "),
         div({ style: "color: " + ColorConfig.secondaryText + "; margin-top: -3px;" }, this._panSliderInputBox),
     ), this._panDropdown, this._panSlider.container);
+    private readonly _voiceModeSelect: HTMLSelectElement = buildOptions(select(), ["Poly", "Mono", "Legato"]);
+    private readonly _voiceModeRow: HTMLDivElement = div(
+        { class: "selectRow" },
+        span({ class: "tip" }, "Voice:"),
+        div({ class: "selectContainer" }, this._voiceModeSelect),
+    );
+
+    private readonly _portamentoBox: HTMLInputElement = input({ type: "checkbox", style: "width: 1em; padding: 0; margin: 0 0.5em;" });
+    private readonly _portamentoRow: HTMLDivElement = div(
+        { class: "selectRow" },
+        span({ class: "tip" }, "Portamento:"),
+        this._portamentoBox,
+    );
+
+    private readonly _portamentoTimeSlider: HTMLInputElement = input({ type: "range", min: "1", max: "48", value: "6", step: "1", style: "margin: 0; flex: 1;" });
+    private readonly _portamentoTimeValue: HTMLSpanElement = span({ style: `font-size: 80%; color: ${ColorConfig.secondaryText}; width: 4em; text-align: right;` }, "6 ticks");
+    private readonly _portamentoTimeRow: HTMLDivElement = div(
+        { class: "selectRow" },
+        span({ class: "tip" }, "Glide:"),
+        this._portamentoTimeSlider,
+        this._portamentoTimeValue,
+    );
+
+    private readonly _portamentoModeSelect: HTMLSelectElement = buildOptions(select(), ["Always", "Legato"]);
+    private readonly _portamentoModeRow: HTMLDivElement = div(
+        { class: "selectRow" },
+        span({ class: "tip" }, "Porta Mode:"),
+        div({ class: "selectContainer" }, this._portamentoModeSelect),
+    );
+
+    private readonly _voiceSettingsGroup: HTMLDivElement = div(
+        { class: "editor-controls" },
+        this._voiceModeRow,
+        this._portamentoRow,
+        this._portamentoTimeRow,
+        this._portamentoModeRow,
+    );
+
     private readonly _panDelaySlider: Slider = new Slider(input({ style: "margin: 0;", type: "range", min: "0", max: Config.modulators.dictionary["pan delay"].maxRawVol, value: "0", step: "1" }), this._doc, (oldValue: number, newValue: number) => new ChangePanDelay(this._doc, oldValue, newValue), false);
     private readonly _panDelayRow: HTMLElement = div({ class: "selectRow dropFader" }, span({ class: "tip", style: "margin-left:4px;", onclick: () => this._openPrompt("panDelay") }, "‣ Delay:"), this._panDelaySlider.container);
     private readonly _panDropdownGroup: HTMLElement = div({ class: "editor-controls", style: "display: none;" }, this._panDelayRow);
@@ -1238,6 +1276,7 @@ export class SongEditor {
     private readonly _instrumentDiv: HTMLDivElement = div({ id:"InstrumentDiv"},
         this._panSliderRow,
         this._panDropdownGroup,
+        this._voiceSettingsGroup,
         this._chipWaveSelectRow,
         this._chipNoiseSelectRow,
 	    this._useChipWaveAdvancedLoopControlsRow,
@@ -1814,6 +1853,12 @@ export class SongEditor {
         this._soundFontFileInput.addEventListener("change", this._whenLoadSoundFontFile);
         this._soundFontBankSelect.addEventListener("change", this._whenSetSoundFontBank);
         this._soundFontPresetSelect.addEventListener("change", this._whenSetSoundFontPreset);
+
+        this._voiceModeSelect.addEventListener("change", this._whenSetVoiceMode);
+        this._portamentoBox.addEventListener("input", this._whenSetPortamento);
+        this._portamentoTimeSlider.addEventListener("input", this._whenSetPortamentoTime);
+        this._portamentoModeSelect.addEventListener("change", this._whenSetPortamentoMode);
+
         //this._pitchedPresetSelect.addEventListener("change", this._whenSetPitchedPreset);
         //this._drumPresetSelect.addEventListener("change", this._whenSetDrumPreset);
         this._algorithmSelect.addEventListener("change", this._whenSetAlgorithm);
@@ -3706,6 +3751,17 @@ export class SongEditor {
             this._ringModHzNum.innerHTML = (clamp(1,4600,Math.floor(20 * Math.pow(4400 / 20,Math.min(1.0, instrument.ringModulationHz / (Config.ringModHzRange - 1))))+(instrument.rmHzOffset-Config.rmHzOffsetCenter))) + " ("+ (Math.floor(20 * Math.pow(4400 / 20,Math.min(1.0, instrument.ringModulationHz / (Config.ringModHzRange - 1))))) + ")";
             this._instrumentVolumeSlider.updateValue(instrument.volume);
             this._instrumentVolumeSliderInputBox.value = "" + (instrument.volume);
+
+            setSelectedValue(this._voiceModeSelect, instrument.voiceMode);
+            this._portamentoBox.checked = instrument.portamento;
+            this._portamentoTimeSlider.value = "" + instrument.portamentoTicks;
+            this._portamentoTimeValue.textContent = instrument.portamentoTicks + " tick" + (instrument.portamentoTicks == 1 ? "" : "s");
+            setSelectedValue(this._portamentoModeSelect, instrument.portamentoMode);
+
+            const showVoiceSettings: boolean = instrument.type != InstrumentType.mod;
+            this._voiceSettingsGroup.style.display = showVoiceSettings ? "" : "none";
+            this._portamentoTimeRow.style.display = showVoiceSettings && instrument.portamento ? "" : "none";
+            this._portamentoModeRow.style.display = showVoiceSettings && instrument.portamento ? "" : "none";
             this._vibratoDepthSlider.updateValue(Math.round(instrument.vibratoDepth * 25));
             this._vibratoDelaySlider.updateValue(Math.round(instrument.vibratoDelay));
             this._vibratoSpeedSlider.updateValue(instrument.vibratoSpeed);
@@ -6211,6 +6267,33 @@ export class SongEditor {
     }
 
 
+
+    private _whenSetVoiceMode = (): void => {
+        const instrument: Instrument = this._doc.song.channels[this._doc.channel].instruments[this._doc.getCurrentInstrument()];
+        instrument.voiceMode = this._voiceModeSelect.selectedIndex;
+        this._doc.notifier.changed();
+    }
+
+    private _whenSetPortamento = (): void => {
+        const instrument: Instrument = this._doc.song.channels[this._doc.channel].instruments[this._doc.getCurrentInstrument()];
+        instrument.portamento = this._portamentoBox.checked;
+        this._portamentoTimeRow.style.display = instrument.portamento ? "" : "none";
+        this._portamentoModeRow.style.display = instrument.portamento ? "" : "none";
+        this._doc.notifier.changed();
+    }
+
+    private _whenSetPortamentoTime = (): void => {
+        const instrument: Instrument = this._doc.song.channels[this._doc.channel].instruments[this._doc.getCurrentInstrument()];
+        instrument.portamentoTicks = clamp(1, 49, parseInt(this._portamentoTimeSlider.value) | 0);
+        this._portamentoTimeValue.textContent = instrument.portamentoTicks + " tick" + (instrument.portamentoTicks == 1 ? "" : "s");
+        this._doc.notifier.changed();
+    }
+
+    private _whenSetPortamentoMode = (): void => {
+        const instrument: Instrument = this._doc.song.channels[this._doc.channel].instruments[this._doc.getCurrentInstrument()];
+        instrument.portamentoMode = this._portamentoModeSelect.selectedIndex;
+        this._doc.notifier.changed();
+    }
 
     private _whenSetTransition = (): void => {
         this._doc.record(new ChangeTransition(this._doc, this._transitionSelect.selectedIndex));

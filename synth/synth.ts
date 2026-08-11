@@ -317,7 +317,7 @@ const enum SongTagCode {
 	harmonics           = CharCode.H, // added in BeepBox URL version 7
 	stringSustain       = CharCode.I, // added in BeepBox URL version 9
     soundFont          = CharCode.J, // added in AbyssBox URL version 4
-//	                    = CharCode.K,
+    voiceSettings       = CharCode.K, // added in AbyssBox URL version 5
 	pan                 = CharCode.L, // added between 8 and 9, DEPRECATED
 	customChipWave      = CharCode.M, // added in JummBox URL version 1(?) for customChipWave
 	songDetails         = CharCode.N, // added in JummBox URL version 1(?) for songTitle
@@ -656,7 +656,10 @@ export class Pattern {
         }
 
         if (patternObject["notes"] && patternObject["notes"].length > 0) {
-            const maxNoteCount: number = Math.min(song.beatsPerBar * Config.partsPerBeat * (isModChannel ? Config.modCount : 1), patternObject["notes"].length >>> 0);
+            const maxNoteCount: number = Math.min(
+                song.beatsPerBar * Config.partsPerBeat * (isModChannel ? Config.modCount : Config.maxChordSize),
+                patternObject["notes"].length >>> 0,
+            );
 
             // TODO: Consider supporting notes specified in any timing order, sorting them and truncating as necessary.
             //let tickClock: number = 0;
@@ -1658,6 +1661,11 @@ export class Instrument {
     public soundFontName: string = "";
     public soundFontBank: number = 0;
     public soundFontPreset: number = 0;
+
+    public voiceMode: number = 0; // 0 poly, 1 mono, 2 legato
+    public portamento: boolean = false;
+    public portamentoTicks: number = 6;
+    public portamentoMode: number = 0; // 0 always, 1 legato
     constructor(isNoiseChannel: boolean, isModChannel: boolean) {
 
         // @jummbus - My screed on how modulator arrays for instruments work, for the benefit of myself in the future, or whoever else.
@@ -1784,6 +1792,12 @@ export class Instrument {
         this.envelopeCount = 0;
         this.upperNoteLimit = Config.maxPitch;
         this.lowerNoteLimit = 0;
+
+        this.voiceMode = 0;
+        this.portamento = false;
+        this.portamentoTicks = 6;
+        this.portamentoMode = 0;
+
         switch (type) {
             case InstrumentType.chip:
                 this.chipWave = 2;
@@ -2027,6 +2041,11 @@ export class Instrument {
         if (this.preset != this.type) {
             instrumentObject["preset"] = this.preset;
         }
+
+        instrumentObject["voiceMode"] = this.voiceMode == 2 ? "legato" : this.voiceMode == 1 ? "mono" : "poly";
+        instrumentObject["portamento"] = this.portamento;
+        instrumentObject["portamentoTicks"] = this.portamentoTicks;
+        instrumentObject["portamentoMode"] = this.portamentoMode == 1 ? "legato" : "always";
 
         for (let i: number = 0; i < Config.filterMorphCount; i++) {
             if (this.eqSubFilters[i] != null)
@@ -2293,6 +2312,19 @@ export class Instrument {
         this.setTypeAndReset(type, isNoiseChannel, isModChannel);
 
         this.effects &= ~(1 << EffectType.panning);
+
+        const voiceMode = instrumentObject["voiceMode"];
+        if (voiceMode == "mono" || voiceMode == 1) {
+            this.voiceMode = 1;
+        } else if (voiceMode == "legato" || voiceMode == 2) {
+            this.voiceMode = 2;
+        } else {
+            this.voiceMode = 0;
+        }
+
+        this.portamento = instrumentObject["portamento"] == true;
+        this.portamentoTicks = clamp(1, 49, instrumentObject["portamentoTicks"] == undefined ? 6 : Math.round(+instrumentObject["portamentoTicks"]));
+        this.portamentoMode = instrumentObject["portamentoMode"] == "legato" || instrumentObject["portamentoMode"] == 1 ? 1 : 0;
 
         if (instrumentObject["preset"] != undefined) {
             this.preset = instrumentObject["preset"] >>> 0;
@@ -3101,8 +3133,24 @@ export class Instrument {
     }
 
     public getTransition(): Transition {
-        return effectsIncludeTransition(this.effects) ? Config.transitions[this.transition] :
+        const baseTransition: Transition = effectsIncludeTransition(this.effects) ? Config.transitions[this.transition] :
             (this.type == InstrumentType.mod ? Config.transitions.dictionary["interrupt"] : Config.transitions.dictionary["normal"]);
+
+        if (this.type == InstrumentType.mod || (this.voiceMode == 0 && !this.portamento)) {
+            return baseTransition;
+        }
+
+        const legato: boolean = this.voiceMode == 2;
+
+        return {
+            index: baseTransition.index,
+            name: baseTransition.name,
+            isSeamless: legato || this.portamento || baseTransition.isSeamless,
+            continues: legato || baseTransition.continues,
+            slides: this.portamento || baseTransition.slides,
+            slideTicks: this.portamento ? this.portamentoTicks : baseTransition.slideTicks,
+            includeAdjacentPatterns: true,
+        };
     }
 
     public getFadeInSeconds(): number {
@@ -3143,7 +3191,7 @@ export class Song {
     private static readonly _oldestUltraBoxVersion: number = 1;
     private static readonly _latestUltraBoxVersion: number = 6;
     private static readonly _oldestAbyssBoxVersion: number = 1;
-    private static readonly _latestAbyssBoxVersion: number = 4;
+    private static readonly _latestAbyssBoxVersion: number = 6;
     // One-character variant detection at the start of URL to distinguish variants such as JummBox, Or Goldbox. "j" and "g" respectively
 	//also "u" is ultrabox lol
     private static readonly _variant = 0x61; //"a" ~ abyssbox
@@ -3478,6 +3526,19 @@ export class Song {
                 buffer.push(SongTagCode.startInstrument, base64IntToCharCode[instrument.type]);
                 buffer.push(SongTagCode.volume, base64IntToCharCode[(instrument.volume + Config.volumeRange / 2) >> 6], base64IntToCharCode[(instrument.volume + Config.volumeRange / 2) & 0x3f]);
                 buffer.push(SongTagCode.preset, base64IntToCharCode[instrument.preset >> 6], base64IntToCharCode[instrument.preset & 63]);
+
+                if (instrument.voiceMode != 0 || instrument.portamento || instrument.portamentoTicks != 6 || instrument.portamentoMode != 0) {
+                    const voiceFlags: number =
+                        (instrument.voiceMode & 0x3) |
+                        (+instrument.portamento << 2) |
+                        ((instrument.portamentoMode & 0x1) << 3);
+
+                    buffer.push(
+                        SongTagCode.voiceSettings,
+                        base64IntToCharCode[voiceFlags],
+                        base64IntToCharCode[Math.max(1, Math.min(48, instrument.portamentoTicks))],
+                    );
+                }
 
                 buffer.push(SongTagCode.eqFilter);
                 buffer.push(base64IntToCharCode[+instrument.eqFilterType]);
@@ -3928,16 +3989,17 @@ export class Song {
                     let curPart: number = 0;
                     for (const note of pattern.notes) {
 
-                        // For mod channels, a negative offset may be necessary.
-                        if (note.start < curPart && isModChannel) {
-                            bits.write(2, 0); // rest, then...
+                        // AbyssBox Pro v6 allows notes on different pitches to overlap.
+                        // A direction bit is written for every rest so curPart can move backward.
+                        if (note.start < curPart) {
+                            bits.write(2, 0); // rest
                             bits.write(1, 1); // negative offset
                             bits.writePartDuration(curPart - note.start);
                         }
 
                         if (note.start > curPart) {
                             bits.write(2, 0); // rest
-                            if (isModChannel) bits.write(1, 0); // positive offset, only needed for mod channels
+                            bits.write(1, 0); // positive offset
                             bits.writePartDuration(note.start - curPart);
                         }
 
@@ -4044,7 +4106,7 @@ export class Song {
 
                     if (curPart < this.beatsPerBar * Config.partsPerBeat + (+isModChannel)) {
                         bits.write(2, 0); // rest
-                        if (isModChannel) bits.write(1, 0); // positive offset
+                        bits.write(1, 0); // positive offset
                         bits.writePartDuration(this.beatsPerBar * Config.partsPerBeat + (+isModChannel) - curPart);
                     }
                 } else {
@@ -4585,6 +4647,15 @@ export class Song {
                 if (instrument.soundFontUrl != "") {
                     void SoundFontLibrary.loadById(instrument.soundFontUrl, instrument.soundFontName).catch(() => {});
                 }
+            } break;
+            case SongTagCode.voiceSettings: {
+                const instrument = this.channels[instrumentChannelIterator].instruments[instrumentIndexIterator];
+                const voiceFlags = base64CharCodeToInt[compressed.charCodeAt(charIndex++)];
+
+                instrument.voiceMode = Math.min(2, voiceFlags & 0x3);
+                instrument.portamento = (voiceFlags & (1 << 2)) != 0;
+                instrument.portamentoMode = (voiceFlags >> 3) & 0x1;
+                instrument.portamentoTicks = Math.max(1, Math.min(48, base64CharCodeToInt[compressed.charCodeAt(charIndex++)]));
             } break;
             case SongTagCode.preset: {
                 const presetValue: number = (base64CharCodeToInt[compressed.charCodeAt(charIndex++)] << 6) | (base64CharCodeToInt[compressed.charCodeAt(charIndex++)]);
@@ -6047,8 +6118,9 @@ export class Song {
                             }
 
                             if (!useOldShape && !newNote) {
-                                // For mod channels, check if you need to move backward too (notes can appear in any order and offset from each other).
-                                if (isModChannel) {
+                                // Mod channels have always supported backward offsets.
+                                // AbyssBox Pro v6 extends the same behavior to pitched/noise channels.
+                                if (isModChannel || (fromAbyssBox && !beforeSix)) {
                                     const isBackwards: boolean = bits.read(1) == 1;
                                     const restLength: number = bits.readPartDuration();
                                     if (isBackwards) {
@@ -7655,7 +7727,7 @@ class EnvelopeComputer {
                 const noteEndTick: number = tone.noteEndPart * Config.ticksPerPart;
                 const noteLengthTicks: number = noteEndTick - noteStartTick;
                 const maximumSlideTicks: number = noteLengthTicks * 0.5;
-                const slideTicks: number = Math.min(maximumSlideTicks, instrument.slideTicks);
+                const slideTicks: number = Math.min(maximumSlideTicks, instrument.portamento ? instrument.portamentoTicks : instrument.slideTicks);
                 if (tone.prevNote != null && !tone.forceContinueAtStart) {
                     if (tickTimeStartReal - noteStartTick < slideTicks) {
                         prevSlideStart = true;
@@ -10538,8 +10610,11 @@ export class Synth {
             const instrument: Instrument = channel.instruments[instrumentIndex];
             let filteredPitches = pitches;
             if (effectsIncludeNoteRange(instrument.effects)) filteredPitches = pitches.filter(pitch => pitch >= instrument.lowerNoteLimit && pitch <= instrument.upperNoteLimit);
+            if (instrument.voiceMode != 0 && filteredPitches.length > 1) filteredPitches = [filteredPitches[filteredPitches.length - 1]];
+
             let filteredBassPitches: number[] = bassPitches;
             if (effectsIncludeNoteRange(instrument.effects)) filteredBassPitches = bassPitches.filter(pitch => pitch >= instrument.lowerNoteLimit && pitch <= instrument.upperNoteLimit);
+            if (instrument.voiceMode != 0 && filteredBassPitches.length > 1) filteredBassPitches = [filteredBassPitches[filteredBassPitches.length - 1]];
             if (this.liveInputDuration > 0 && (channelIndex == this.liveInputChannel) && pitches.length > 0 && this.liveInputInstruments.indexOf(instrumentIndex) != -1) {
                 const instrument: Instrument = channel.instruments[instrumentIndex];
 
@@ -10877,25 +10952,40 @@ export class Synth {
             let note: Note | null = null;
             let prevNote: Note | null = null;
             let nextNote: Note | null = null;
+            const activeNotes: Note[] = [];
+            let patternHasOverlaps: boolean = false;
 
-            // Bit Obvious, but this if statement is getting what notes are supposed to be played and what the previous note is.
+            // Find every note active at this part. Old AbyssBox songs normally have
+            // at most one Note object active, but Independent Notes can have several.
             if (playSong && pattern != null && !channel.muted && (!this.isRecording || this.liveInputChannel != channelIndex)) {
+                let latestEnd: number = -1;
+
                 for (let i: number = 0; i < pattern.notes.length; i++) {
-                    if (pattern.notes[i].end <= currentPart) { // All notes that this applies to is a previous note
-                        prevNote = pattern.notes[i];
-                    } else if (pattern.notes[i].start <= currentPart && pattern.notes[i].end > currentPart) { // This is the current note
-                        note = pattern.notes[i];
-                    } else if (pattern.notes[i].start > currentPart) { // All notes this applies to is a next note
-                        nextNote = pattern.notes[i];
-                        break;
+                    const candidate: Note = pattern.notes[i];
+
+                    if (candidate.start < latestEnd) {
+                        patternHasOverlaps = true;
+                    }
+                    latestEnd = Math.max(latestEnd, candidate.end);
+
+                    if (candidate.end <= currentPart) {
+                        if (prevNote == null || candidate.end >= prevNote.end) {
+                            prevNote = candidate;
+                        }
+                    } else if (candidate.start <= currentPart && candidate.end > currentPart) {
+                        activeNotes.push(candidate);
+
+                        // Mono/legato priority: the most recently-started active note wins.
+                        if (note == null || candidate.start >= note.start) {
+                            note = candidate;
+                        }
+                    } else if (candidate.start > currentPart && nextNote == null) {
+                        nextNote = candidate;
                     }
                 }
 
-                // If the previous or next note isn't right before or after the current note, then it'll set itself as null.
-                if (note != null) {
-                    if (prevNote != null && prevNote.end != note.start) prevNote = null;
-                    if (nextNote != null && nextNote.start != note.end) nextNote = null;
-                }
+                // Adjacency is resolved per instrument below because "Always" portamento
+                // is allowed to remember the previous pitch across a gap.
             }
 
             // Seamless tones from a pattern with a single instrument can be transferred to a different single seamless instrument in the next pattern.
@@ -10917,10 +11007,135 @@ export class Synth {
                 const instrumentState: InstrumentState = channelState.instruments[instrumentIndex];
                 const toneList: Deque<Tone> = instrumentState.activeTones;
                 let toneCount: number = 0;
-                if ((note != null) && (!song.patternInstruments || (pattern!.instruments.indexOf(instrumentIndex) != -1))) {
-                    const instrument: Instrument = channel.instruments[instrumentIndex];
+                const instrument: Instrument = channel.instruments[instrumentIndex];
+                const instrumentIsActiveInPattern: boolean = !song.patternInstruments || (pattern != null && pattern.instruments.indexOf(instrumentIndex) != -1);
+
+                if (patternHasOverlaps && instrument.voiceMode == 0 && activeNotes.length > 0 && instrumentIsActiveInPattern) {
+                    const chord: Chord = instrument.getChord();
+
+                    const getIndependentTone = (activeNote: Note, pitch: number): Tone => {
+                        let matchIndex: number = -1;
+
+                        for (let i: number = toneCount; i < toneList.count(); i++) {
+                            const candidate: Tone = toneList.get(i);
+                            if (candidate.note == activeNote && candidate.pitches[0] == pitch) {
+                                matchIndex = i;
+                                break;
+                            }
+                        }
+
+                        if (matchIndex >= 0) {
+                            if (matchIndex != toneCount) {
+                                const current: Tone = toneList.get(toneCount);
+                                const matched: Tone = toneList.get(matchIndex);
+                                toneList.set(toneCount, matched);
+                                toneList.set(matchIndex, current);
+                            }
+
+                            return toneList.get(toneCount);
+                        }
+
+                        let tone: Tone;
+                        if (toneList.count() <= toneCount) {
+                            tone = this.newTone();
+                            toneList.pushBack(tone);
+                        } else {
+                            const oldTone: Tone = toneList.get(toneCount);
+
+                            if (oldTone.isOnLastTick) {
+                                this.freeTone(oldTone);
+                            } else {
+                                this.releaseTone(instrumentState, oldTone);
+                            }
+
+                            tone = this.newTone();
+                            toneList.set(toneCount, tone);
+                        }
+
+                        return tone;
+                    };
+
+                    for (const activeNote of activeNotes) {
+                        let filteredPitches: number[] = activeNote.pitches;
+
+                        if (effectsIncludeNoteRange(instrument.effects)) {
+                            filteredPitches = activeNote.pitches.filter(pitch => pitch >= instrument.lowerNoteLimit && pitch <= instrument.upperNoteLimit);
+                        }
+
+                        if (filteredPitches.length <= 0) continue;
+
+                        if (chord.singleTone) {
+                            const tone: Tone = getIndependentTone(activeNote, filteredPitches[0]);
+                            const atNoteStart: boolean = Config.ticksPerPart * activeNote.start == currentTick;
+
+                            toneCount++;
+
+                            for (let i: number = 0; i < filteredPitches.length; i++) {
+                                tone.pitches[i] = filteredPitches[i];
+                            }
+
+                            tone.pitchCount = filteredPitches.length;
+                            tone.chordSize = 1;
+                            tone.instrumentIndex = instrumentIndex;
+                            tone.note = activeNote;
+                            tone.noteStartPart = activeNote.start;
+                            tone.noteEndPart = activeNote.end;
+                            tone.prevNote = null;
+                            tone.nextNote = null;
+                            tone.prevNotePitchIndex = 0;
+                            tone.nextNotePitchIndex = 0;
+                            tone.atNoteStart = atNoteStart;
+                            tone.passedEndOfNote = false;
+                            tone.forceContinueAtStart = false;
+                            tone.forceContinueAtEnd = false;
+
+                            this.computeTone(song, channelIndex, samplesPerTick, tone, false, false);
+                        } else {
+                            for (let pitchIndex: number = 0; pitchIndex < filteredPitches.length; pitchIndex++) {
+                                const pitch: number = filteredPitches[pitchIndex];
+                                const tone: Tone = getIndependentTone(activeNote, pitch);
+                                const atNoteStart: boolean = Config.ticksPerPart * activeNote.start == currentTick;
+
+                                toneCount++;
+
+                                tone.pitches[0] = pitch;
+                                tone.pitchCount = 1;
+                                tone.chordSize = filteredPitches.length;
+                                tone.instrumentIndex = instrumentIndex;
+                                tone.note = activeNote;
+                                tone.noteStartPart = activeNote.start;
+                                tone.noteEndPart = activeNote.end;
+                                tone.prevNote = null;
+                                tone.nextNote = null;
+                                tone.prevNotePitchIndex = pitchIndex;
+                                tone.nextNotePitchIndex = pitchIndex;
+                                tone.atNoteStart = atNoteStart;
+                                tone.passedEndOfNote = false;
+                                tone.forceContinueAtStart = false;
+                                tone.forceContinueAtEnd = false;
+
+                                this.computeTone(song, channelIndex, samplesPerTick, tone, false, false);
+                            }
+                        }
+                    }
+                } else if ((note != null) && instrumentIsActiveInPattern) {
                     let prevNoteForThisInstrument: Note | null = prevNote;
                     let nextNoteForThisInstrument: Note | null = nextNote;
+
+                    if (instrument.voiceMode != 0 && activeNotes.length > 1 && note != null) {
+                        const noteIndex: number = activeNotes.indexOf(note);
+                        if (noteIndex > 0) {
+                            prevNoteForThisInstrument = activeNotes[noteIndex - 1];
+                        }
+                    }
+
+                    const alwaysPortamento: boolean = instrument.portamento && instrument.portamentoMode == 0;
+                    if (!alwaysPortamento && prevNoteForThisInstrument != null && prevNoteForThisInstrument.end != note.start) {
+                        prevNoteForThisInstrument = null;
+                    }
+                    if (nextNoteForThisInstrument != null && nextNoteForThisInstrument.start != note.end) {
+                        nextNoteForThisInstrument = null;
+                    }
 
                     const partsPerBar: Number = Config.partsPerBeat * song.beatsPerBar;
                     const transition: Transition = instrument.getTransition();
@@ -10982,6 +11197,8 @@ export class Synth {
 
                     let filteredPitches: number[] = note.pitches;
                     if (effectsIncludeNoteRange(instrument.effects)) filteredPitches = note.pitches.filter(pitch => pitch >= instrument.lowerNoteLimit && pitch <= instrument.upperNoteLimit);
+                    if (instrument.voiceMode != 0 && filteredPitches.length > 1) filteredPitches = [filteredPitches[filteredPitches.length - 1]];
+
                     if (chord.singleTone && !(filteredPitches.length <= 0)) {
                         const atNoteStart: boolean = (Config.ticksPerPart * note.start == currentTick);
                         let tone: Tone;
