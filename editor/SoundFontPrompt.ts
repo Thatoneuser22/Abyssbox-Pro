@@ -53,7 +53,7 @@ export class SoundFontPrompt {
         const instrument = this._getInstrument();
         this._urlInput.value = instrument.soundFontUrl.startsWith("http://") || instrument.soundFontUrl.startsWith("https://") ? instrument.soundFontUrl : "";
         this._loadButton.addEventListener("click", this._load);
-        this._cancelButton.addEventListener("click", this._close);
+        this._cancelButton.addEventListener("click", this._cancel);
         this._urlInput.addEventListener("keydown", this._whenKeyDown);
         this._urlInput.focus();
     }
@@ -112,7 +112,7 @@ export class SoundFontPrompt {
             this._status.textContent = "Loaded " + font.name;
             this._doc.notifier.changed();
 
-            requestAnimationFrame(() => this._close());
+            requestAnimationFrame(() => this._finish());
         } catch (error) {
             const cached = await SoundFontLibrary.loadCached(url);
 
@@ -127,7 +127,7 @@ export class SoundFontPrompt {
                     instrument.soundFontPreset = presets[0].preset;
                     this._doc.notifier.changed();
                     this._status.textContent = "Loaded cached SoundFont.";
-                    requestAnimationFrame(() => this._close());
+                    requestAnimationFrame(() => this._finish());
                     return;
                 }
             }
@@ -141,14 +141,19 @@ export class SoundFontPrompt {
         }
     };
 
-    private _close = (): void => {
+    private _finish = (): void => {
+        this._doc.prompt = null;
+        this._doc.notifier.changed();
+    };
+
+    private _cancel = (): void => {
         this._doc.prompt = null;
         this._doc.undo();
     };
 
     public cleanUp(): void {
         this._loadButton.removeEventListener("click", this._load);
-        this._cancelButton.removeEventListener("click", this._close);
+        this._cancelButton.removeEventListener("click", this._cancel);
         this._urlInput.removeEventListener("keydown", this._whenKeyDown);
     }
 }
