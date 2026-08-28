@@ -7,6 +7,7 @@ import { Deque } from "./Deque";
 import { events } from "../global/Events";
 import { FilterCoefficients, FrequencyResponse, DynamicBiquadFilter, warpInfinityToNyquist } from "./filtering";
 import { SoundFontLibrary, SoundFontZone } from "./SoundFont";
+import { SfxData, SfxLibrary } from "./Sfx";
 
 
 declare global {
@@ -321,6 +322,7 @@ const enum SongTagCode {
     ott                 = CharCode.NUM_0, // added in AbyssBox URL version 7
     noteTypes           = CharCode.NUM_1, // added in AbyssBox URL version 9
     independentNotes    = CharCode.NUM_2, // added in AbyssBox URL version 10
+    sfx                 = CharCode.NUM_3, // added in AbyssBox URL version 12
 	pan                 = CharCode.L, // added between 8 and 9, DEPRECATED
 	customChipWave      = CharCode.M, // added in JummBox URL version 1(?) for customChipWave
 	songDetails         = CharCode.N, // added in JummBox URL version 1(?) for songTitle
@@ -1781,6 +1783,10 @@ export class Instrument {
     public soundFontName: string = "";
     public soundFontBank: number = 0;
     public soundFontPreset: number = 0;
+    public sfxSampleId: string = "";
+    public sfxSampleName: string = "";
+    public sfxSourcePath: string = "";
+    public sfxPlaybackMode: number = 0; // 0 one-shot, 1 gate
 
     public voiceMode: number = 0; // 0 poly, 1 mono, 2 legato
     public portamento: boolean = false;
@@ -1919,6 +1925,10 @@ export class Instrument {
         this.portamentoTicks = 6;
         this.portamentoMode = 0;
         this.ottAmount = 0;
+        this.sfxSampleId = "";
+        this.sfxSampleName = "";
+        this.sfxSourcePath = "";
+        this.sfxPlaybackMode = 0;
 
         switch (type) {
             case InstrumentType.chip:
@@ -2052,6 +2062,12 @@ export class Instrument {
                 this.unisonExpression = Config.unisons[this.unison].expression;
                 this.unisonSign = Config.unisons[this.unison].sign;
                 this.unisonBuzzes = false;
+                break;
+            case InstrumentType.sfx:
+                this.chord = Config.chords.dictionary["simultaneous"].index;
+                this.voiceMode = 0;
+                this.portamento = false;
+                this.transition = Config.transitions.dictionary["normal"].index;
                 break;
             default:
                 throw new Error("Unrecognized instrument type: " + type);
@@ -2406,6 +2422,11 @@ export class Instrument {
             instrumentObject["soundFontName"] = this.soundFontName;
             instrumentObject["soundFontBank"] = this.soundFontBank;
             instrumentObject["soundFontPreset"] = this.soundFontPreset;
+        } else if (this.type == InstrumentType.sfx) {
+            instrumentObject["sfxSampleId"] = this.sfxSampleId;
+            instrumentObject["sfxSampleName"] = this.sfxSampleName;
+            instrumentObject["sfxSourcePath"] = this.sfxSourcePath;
+            instrumentObject["sfxPlaybackMode"] = this.sfxPlaybackMode;
         } else if (this.type == InstrumentType.mod) {
             instrumentObject["modChannels"] = [];
             instrumentObject["modInstruments"] = [];
@@ -2823,6 +2844,17 @@ export class Instrument {
             this.soundFontName = typeof instrumentObject["soundFontName"] == "string" ? instrumentObject["soundFontName"] : "";
             this.soundFontBank = Math.max(0, instrumentObject["soundFontBank"] | 0);
             this.soundFontPreset = Math.max(0, instrumentObject["soundFontPreset"] | 0);
+        }
+
+        if (this.type == InstrumentType.sfx) {
+            this.sfxSampleId = typeof instrumentObject["sfxSampleId"] == "string" ? instrumentObject["sfxSampleId"] : "";
+            this.sfxSampleName = typeof instrumentObject["sfxSampleName"] == "string" ? instrumentObject["sfxSampleName"] : "";
+            this.sfxSourcePath = typeof instrumentObject["sfxSourcePath"] == "string" ? instrumentObject["sfxSourcePath"] : "";
+            this.sfxPlaybackMode = Math.max(0, Math.min(1, instrumentObject["sfxPlaybackMode"] | 0));
+
+            if (this.sfxSampleId != "") {
+                void SfxLibrary.loadById(this.sfxSampleId, this.sfxSampleName).catch(() => {});
+            }
         }
 
         const legacyEnvelopeNames: Dictionary<string> = { "custom": "note size", "steady": "none", "pluck 1": "twang 1", "pluck 2": "twang 2", "pluck 3": "twang 3" };
@@ -3341,7 +3373,7 @@ export class Song {
     private static readonly _oldestUltraBoxVersion: number = 1;
     private static readonly _latestUltraBoxVersion: number = 6;
     private static readonly _oldestAbyssBoxVersion: number = 0;
-    private static readonly _latestAbyssBoxVersion: number = 11;
+    private static readonly _latestAbyssBoxVersion: number = 12;
     // One-character variant detection at the start of URL to distinguish variants such as JummBox, Or Goldbox. "j" and "g" respectively
 	//also "u" is ultrabox lol
     private static readonly _variant = 0x61; //"a" ~ abyssbox
@@ -4050,6 +4082,25 @@ export class Song {
                             instrument.unisonBuzzes,
                         );
                     }
+                } else if (instrument.type == InstrumentType.sfx) {
+                    const encodedSfxId: string = encodeURIComponent(instrument.sfxSampleId);
+                    const encodedSfxName: string = encodeURIComponent(instrument.sfxSampleName);
+                    const encodedSfxSourcePath: string = encodeURIComponent(instrument.sfxSourcePath);
+
+                    if (encodedSfxId.length > 0xfff || encodedSfxName.length > 0xfff || encodedSfxSourcePath.length > 0xfff) {
+                        throw new Error("SFX sample metadata is too long to save in a song URL.");
+                    }
+
+                    buffer.push(SongTagCode.sfx);
+
+                    for (const value of [encodedSfxId, encodedSfxName, encodedSfxSourcePath]) {
+                        buffer.push(base64IntToCharCode[value.length >> 6], base64IntToCharCode[value.length & 0x3f]);
+                        for (let i: number = 0; i < value.length; i++) {
+                            buffer.push(value.charCodeAt(i));
+                        }
+                    }
+
+                    buffer.push(base64IntToCharCode[Math.max(0, Math.min(1, instrument.sfxPlaybackMode | 0))]);
                 } else if (instrument.type == InstrumentType.mod) {
                     // Handled down below. Could be moved, but meh.
                 } else {
@@ -4919,6 +4970,33 @@ export class Song {
 
                 if (instrument.soundFontUrl != "") {
                     void SoundFontLibrary.loadById(instrument.soundFontUrl, instrument.soundFontName).catch(() => {});
+                }
+            } break;
+            case SongTagCode.sfx: {
+                const instrument = this.channels[instrumentChannelIterator].instruments[instrumentIndexIterator];
+
+                const readEncodedSfxString = (): string => {
+                    const length: number =
+                        (base64CharCodeToInt[compressed.charCodeAt(charIndex++)] << 6)
+                        + base64CharCodeToInt[compressed.charCodeAt(charIndex++)];
+
+                    const encoded: string = compressed.substring(charIndex, charIndex + length);
+                    charIndex += length;
+
+                    try {
+                        return decodeURIComponent(encoded);
+                    } catch {
+                        return encoded;
+                    }
+                };
+
+                instrument.sfxSampleId = readEncodedSfxString();
+                instrument.sfxSampleName = readEncodedSfxString();
+                instrument.sfxSourcePath = readEncodedSfxString();
+                instrument.sfxPlaybackMode = Math.max(0, Math.min(1, base64CharCodeToInt[compressed.charCodeAt(charIndex++)]));
+
+                if (instrument.sfxSampleId != "") {
+                    void SfxLibrary.loadById(instrument.sfxSampleId, instrument.sfxSampleName).catch(() => {});
                 }
             } break;
             case SongTagCode.voiceSettings: {
@@ -8367,6 +8445,9 @@ class Tone {
     public freshlyAllocated: boolean = true;
     public atNoteStart: boolean = false;
     public isOnLastTick: boolean = false; // Whether the tone is finished fading out and ready to be freed.
+    public continuedSfxTail: boolean = false;
+    public sfxTriggerNote: Note | null = null;
+    public sfxTriggerBar: number = -1;
     public passedEndOfNote: boolean = false;
     public forceContinueAtStart: boolean = false;
     public forceContinueAtEnd: boolean = false;
@@ -8443,6 +8524,9 @@ class Tone {
 
     public reset(): void {
         this.soundFontZone = null;
+        this.continuedSfxTail = false;
+        this.sfxTriggerNote = null;
+        this.sfxTriggerBar = -1;
         this.noiseSample = 0.0;
         this.noiseSampleA = 0.0;
         this.noiseSampleB = 0.0;
@@ -8494,6 +8578,7 @@ class InstrumentState {
     public type: InstrumentType = InstrumentType.chip;
     public synthesizer: Function | null = null;
     public wave: Float32Array | null = null;
+    public sfxSample: SfxData | null = null;
 				 // advloop addition
             public isUsingAdvancedLoopControls = false;
             public chipWaveLoopStart = 0;
@@ -9542,6 +9627,7 @@ class InstrumentState {
 
     public updateWaves(instrument: Instrument, samplesPerSecond: number): void {
         this.volumeScale = 1.0;
+        this.sfxSample = instrument.type == InstrumentType.sfx ? SfxLibrary.get(instrument.sfxSampleId) : null;
         if (instrument.type == InstrumentType.chip || instrument.type == InstrumentType.pwm || instrument.type == InstrumentType.customChipWave || instrument.type == InstrumentType.noise || instrument.type == InstrumentType.harmonics || instrument.type == InstrumentType.pickedString || instrument.type == InstrumentType.spectrum || instrument.type == InstrumentType.soundfont) {
             this.unisonVoices = instrument.unisonVoices;
             this.unisonSpread = instrument.unisonSpread;
@@ -10301,6 +10387,7 @@ export class Synth {
 
     public pause(): void {
         if (!this.isPlayingSong) return;
+        this.stopAllSfxTones();
         this.isPlayingSong = false;
         this.isRecording = false;
         this.modValues = [];
@@ -10331,6 +10418,39 @@ export class Synth {
                 for (const instrumentState of channelState.instruments) {
                     instrumentState.resetAllEffects();
                 }
+            }
+        }
+    }
+
+    private stopAllSfxTones(): void {
+        if (this.song == null) return;
+
+        for (let channelIndex: number = 0; channelIndex < this.song.getChannelCount(); channelIndex++) {
+            const channel: Channel = this.song.channels[channelIndex];
+            const channelState: ChannelState | undefined = this.channels[channelIndex];
+            if (channelState == undefined) continue;
+
+            for (let instrumentIndex: number = 0; instrumentIndex < channel.instruments.length; instrumentIndex++) {
+                const instrument: Instrument = channel.instruments[instrumentIndex];
+                if (instrument.type != InstrumentType.sfx) continue;
+
+                const instrumentState: InstrumentState | undefined = channelState.instruments[instrumentIndex];
+                if (instrumentState == undefined) continue;
+
+                while (instrumentState.activeTones.count() > 0) {
+                    this.freeTone(instrumentState.activeTones.popBack());
+                }
+                while (instrumentState.activeModTones.count() > 0) {
+                    this.freeTone(instrumentState.activeModTones.popBack());
+                }
+                while (instrumentState.releasedTones.count() > 0) {
+                    this.freeTone(instrumentState.releasedTones.popBack());
+                }
+                while (instrumentState.liveInputTones.count() > 0) {
+                    this.freeTone(instrumentState.liveInputTones.popBack());
+                }
+
+                instrumentState.resetAllEffects();
             }
         }
     }
@@ -10479,6 +10599,7 @@ export class Synth {
             const oldBar: number = this.bar;
             this.bar = this.song.loopStart;
             this.playheadInternal += this.bar - oldBar;
+            this.stopAllSfxTones();
 
             if (this.playing)
                 this.computeLatestModValues();
@@ -10492,6 +10613,7 @@ export class Synth {
         this.bar++;
         if (this.bar >= this.song.barCount) {
             this.bar = 0;
+            this.stopAllSfxTones();
         }
         this.playheadInternal += this.bar - oldBar;
 
@@ -10508,6 +10630,7 @@ export class Synth {
             this.bar = this.song.barCount - 1;
         }
         this.playheadInternal += this.bar - oldBar;
+        this.stopAllSfxTones();
 
         if (this.playing)
             this.computeLatestModValues();
@@ -10567,6 +10690,10 @@ export class Synth {
             this.bar = this.song.loopStart;
             if (this.loopBarStart != -1) this.bar = this.loopBarStart;
             if (this.loopRepeatCount > 0) this.loopRepeatCount--;
+        }
+
+        if (this.prevBar != null && this.bar <= this.prevBar) {
+            this.stopAllSfxTones();
         }
 
     }
@@ -10637,13 +10764,19 @@ export class Synth {
 
                 this.prevBar = this.bar;
                 this.bar = this.getNextBar();
-                if (this.bar <= this.prevBar && this.loopRepeatCount > 0) this.loopRepeatCount--;
+
+                if (this.bar <= this.prevBar) {
+                    this.stopAllSfxTones();
+                    if (this.loopRepeatCount > 0) this.loopRepeatCount--;
+                }
 
             }
             if (this.bar >= song.barCount) {
+                this.stopAllSfxTones();
                 this.bar = 0;
                 if (this.loopRepeatCount != -1) {
                     ended = true;
+                    this.resetEffects();
                     this.pause();
                 }
             }
@@ -10769,12 +10902,31 @@ export class Synth {
 
                         for (let i: number = 0; i < instrumentState.releasedTones.count(); i++) {
                             const tone: Tone = instrumentState.releasedTones.get(i);
-                            if (tone.ticksSinceReleased >= Math.abs(instrument.getFadeOutTicks())) {
+                            const oneShotSfx: boolean = instrument.type == InstrumentType.sfx && instrument.sfxPlaybackMode == 0;
+
+                            if (oneShotSfx && tone.sfxTriggerNote != null && tone.sfxTriggerBar >= 0) {
+                                const triggerPattern: Pattern | null = song.getPattern(channelIndex, tone.sfxTriggerBar);
+
+                                if (triggerPattern == null || triggerPattern.notes.indexOf(tone.sfxTriggerNote) == -1) {
+                                    this.freeReleasedTone(instrumentState, i);
+                                    i--;
+                                    continue;
+                                }
+                            }
+
+                            if (oneShotSfx && tone.isOnLastTick) {
                                 this.freeReleasedTone(instrumentState, i);
                                 i--;
                                 continue;
                             }
-                            const shouldFadeOutFast: boolean = (tonesPlayedInThisInstrument >= Config.maximumTonesPerChannel);
+
+                            if (!oneShotSfx && tone.ticksSinceReleased >= Math.abs(instrument.getFadeOutTicks())) {
+                                this.freeReleasedTone(instrumentState, i);
+                                i--;
+                                continue;
+                            }
+
+                            const shouldFadeOutFast: boolean = !oneShotSfx && (tonesPlayedInThisInstrument >= Config.maximumTonesPerChannel);
                             this.computeTone(song, channelIndex, samplesPerTick, tone, true, shouldFadeOutFast);
                             tonesPlayedInThisInstrument++;
                         }
@@ -11003,9 +11155,14 @@ export class Synth {
                                 } else {
                                     this.prevBar = this.bar;
                                     this.bar = this.getNextBar();
-                                    if (this.bar <= this.prevBar && this.loopRepeatCount > 0) this.loopRepeatCount--;
+
+                                    if (this.bar <= this.prevBar) {
+                                        this.stopAllSfxTones();
+                                        if (this.loopRepeatCount > 0) this.loopRepeatCount--;
+                                    }
 
                                     if (this.bar >= song.barCount) {
+                                        this.stopAllSfxTones();
                                         this.bar = 0;
                                         if (this.loopRepeatCount != -1) {
                                             ended = true;
@@ -11574,8 +11731,33 @@ export class Synth {
                 let toneCount: number = 0;
                 const instrument: Instrument = channel.instruments[instrumentIndex];
                 const instrumentIsActiveInPattern: boolean = !song.patternInstruments || (pattern != null && pattern.instruments.indexOf(instrumentIndex) != -1);
+                const oneShotSfx: boolean =
+                    instrument.type == InstrumentType.sfx
+                    && instrument.sfxPlaybackMode == 0;
 
-                if (patternHasOverlaps && instrument.voiceMode == 0 && activeNotes.length > 0 && instrumentIsActiveInPattern) {
+                const takeRunningSfxTail = (_noteStartPart: number): Tone | null => {
+                    if (!oneShotSfx) return null;
+
+                    for (let i: number = 0; i < instrumentState.releasedTones.count(); i++) {
+                        const tail: Tone = instrumentState.releasedTones.get(i);
+
+                        if (tail.isOnLastTick) {
+                            this.freeReleasedTone(instrumentState, i);
+                            i--;
+                            continue;
+                        }
+
+                        instrumentState.releasedTones.remove(i);
+                        tail.ticksSinceReleased = 0;
+                        tail.continuedSfxTail = true;
+                        tail.passedEndOfNote = false;
+                        return tail;
+                    }
+
+                    return null;
+                };
+
+                if (!oneShotSfx && patternHasOverlaps && instrument.voiceMode == 0 && activeNotes.length > 0 && instrumentIsActiveInPattern) {
                     const chord: Chord = instrument.getChord();
 
                     const getIndependentTone = (activeNote: Note, pitch: number): Tone => {
@@ -11601,20 +11783,27 @@ export class Synth {
                         }
 
                         let tone: Tone;
+                        const atNoteStart: boolean = Config.ticksPerPart * activeNote.start == currentTick;
+
                         if (toneList.count() <= toneCount) {
-                            tone = this.newTone();
+                            tone = takeRunningSfxTail(activeNote.start) || this.newTone();
                             toneList.pushBack(tone);
                         } else {
                             const oldTone: Tone = toneList.get(toneCount);
 
-                            if (oldTone.isOnLastTick) {
-                                this.freeTone(oldTone);
+                            if (oneShotSfx && atNoteStart && !oldTone.isOnLastTick) {
+                                tone = oldTone;
+                                tone.continuedSfxTail = true;
                             } else {
-                                this.releaseTone(instrumentState, oldTone);
-                            }
+                                if (oldTone.isOnLastTick) {
+                                    this.freeTone(oldTone);
+                                } else {
+                                    this.releaseTone(instrumentState, oldTone);
+                                }
 
-                            tone = this.newTone();
-                            toneList.set(toneCount, tone);
+                                tone = takeRunningSfxTail(activeNote.start) || this.newTone();
+                                toneList.set(toneCount, tone);
+                            }
                         }
 
                         return tone;
@@ -11649,7 +11838,12 @@ export class Synth {
                             tone.nextNote = null;
                             tone.prevNotePitchIndex = tone.prevNote == null ? 0 : getClosestPitchIndex(tone.prevNote, filteredPitches[0]);
                             tone.nextNotePitchIndex = 0;
-                            tone.atNoteStart = atNoteStart;
+                            tone.atNoteStart = atNoteStart && !tone.continuedSfxTail;
+                            tone.continuedSfxTail = false;
+                            if (oneShotSfx && tone.sfxTriggerNote == null) {
+                                tone.sfxTriggerNote = tone.note;
+                                tone.sfxTriggerBar = this.bar;
+                            }
                             tone.passedEndOfNote = false;
                             tone.forceContinueAtStart = false;
                             tone.forceContinueAtEnd = false;
@@ -11674,7 +11868,12 @@ export class Synth {
                                 tone.nextNote = null;
                                 tone.prevNotePitchIndex = tone.prevNote == null ? pitchIndex : getClosestPitchIndex(tone.prevNote, pitch);
                                 tone.nextNotePitchIndex = pitchIndex;
-                                tone.atNoteStart = atNoteStart;
+                                tone.atNoteStart = atNoteStart && !tone.continuedSfxTail;
+                            tone.continuedSfxTail = false;
+                                if (oneShotSfx && tone.sfxTriggerNote == null) {
+                                    tone.sfxTriggerNote = tone.note;
+                                    tone.sfxTriggerBar = this.bar;
+                                }
                                 tone.passedEndOfNote = false;
                                 tone.forceContinueAtStart = false;
                                 tone.forceContinueAtEnd = false;
@@ -11781,23 +11980,31 @@ export class Synth {
 
                     let filteredPitches: number[] = note.pitches;
                     if (effectsIncludeNoteRange(instrument.effects)) filteredPitches = note.pitches.filter(pitch => pitch >= instrument.lowerNoteLimit && pitch <= instrument.upperNoteLimit);
+                    if (oneShotSfx && filteredPitches.length > 1) filteredPitches = [filteredPitches[0]];
                     if (instrument.voiceMode != 0 && filteredPitches.length > 1) filteredPitches = [filteredPitches[filteredPitches.length - 1]];
 
                     if (chord.singleTone && !(filteredPitches.length <= 0)) {
                         const atNoteStart: boolean = (Config.ticksPerPart * note.start == currentTick);
                         let tone: Tone;
                         if (toneList.count() <= toneCount) {
-                            tone = this.newTone();
+                            tone = takeRunningSfxTail(note.start) || this.newTone();
                             toneList.pushBack(tone);
                         } else if (atNoteStart && ((!(transition.isSeamless || instrument.clicklessTransition) && !forceContinueAtStart) || prevNoteForThisInstrument == null)) {
                             const oldTone: Tone = toneList.get(toneCount);
-                            if (oldTone.isOnLastTick) {
-                                this.freeTone(oldTone);
+
+                            if (oneShotSfx && !oldTone.isOnLastTick) {
+                                tone = oldTone;
+                                tone.continuedSfxTail = true;
                             } else {
-                                this.releaseTone(instrumentState, oldTone);
+                                if (oldTone.isOnLastTick) {
+                                    this.freeTone(oldTone);
+                                } else {
+                                    this.releaseTone(instrumentState, oldTone);
+                                }
+
+                                tone = takeRunningSfxTail(note.start) || this.newTone();
+                                toneList.set(toneCount, tone);
                             }
-                            tone = this.newTone();
-                            toneList.set(toneCount, tone);
                         } else {
                             tone = toneList.get(toneCount);
                         }
@@ -11816,7 +12023,12 @@ export class Synth {
                         tone.nextNote = nextNoteForThisInstrument;
                         tone.prevNotePitchIndex = 0;
                         tone.nextNotePitchIndex = 0;
-                        tone.atNoteStart = atNoteStart;
+                        tone.atNoteStart = atNoteStart && !tone.continuedSfxTail;
+                            tone.continuedSfxTail = false;
+                        if (oneShotSfx && tone.sfxTriggerNote == null) {
+                            tone.sfxTriggerNote = tone.note;
+                            tone.sfxTriggerBar = this.bar;
+                        }
                         tone.passedEndOfNote = false;
                         tone.forceContinueAtStart = forceContinueAtStart;
                         tone.forceContinueAtEnd = forceContinueAtEnd;
@@ -11874,17 +12086,24 @@ export class Synth {
                                 this.tempMatchedPitchTones[toneCount] = null;
                                 toneList.pushBack(tone);
                             } else if (toneList.count() <= toneCount) {
-                                tone = this.newTone();
+                                tone = takeRunningSfxTail(noteStartPart) || this.newTone();
                                 toneList.pushBack(tone);
                             } else if (atNoteStart && ((!transition.isSeamless && !forceContinueAtStart) || prevNoteForThisTone == null)) {
                                 const oldTone: Tone = toneList.get(toneCount);
-                                if (oldTone.isOnLastTick) {
-                                    this.freeTone(oldTone);
+
+                                if (oneShotSfx && !oldTone.isOnLastTick) {
+                                    tone = oldTone;
+                                    tone.continuedSfxTail = true;
                                 } else {
-                                    this.releaseTone(instrumentState, oldTone);
+                                    if (oldTone.isOnLastTick) {
+                                        this.freeTone(oldTone);
+                                    } else {
+                                        this.releaseTone(instrumentState, oldTone);
+                                    }
+
+                                    tone = takeRunningSfxTail(noteStartPart) || this.newTone();
+                                    toneList.set(toneCount, tone);
                                 }
-                                tone = this.newTone();
-                                toneList.set(toneCount, tone);
                             } else {
                                 tone = toneList.get(toneCount);
                             }
@@ -11901,7 +12120,12 @@ export class Synth {
                             tone.nextNote = nextNoteForThisTone;
                             tone.prevNotePitchIndex = i;
                             tone.nextNotePitchIndex = i;
-                            tone.atNoteStart = atNoteStart;
+                            tone.atNoteStart = atNoteStart && !tone.continuedSfxTail;
+                            tone.continuedSfxTail = false;
+                            if (oneShotSfx && tone.sfxTriggerNote == null) {
+                                tone.sfxTriggerNote = tone.note;
+                                tone.sfxTriggerBar = this.bar;
+                            }
                             tone.passedEndOfNote = passedEndOfNote;
                             tone.forceContinueAtStart = forceContinueAtStart && prevNoteForThisTone != null;
                             tone.forceContinueAtEnd = forceContinueAtEnd && nextNoteForThisTone != null;
@@ -12128,6 +12352,11 @@ export class Synth {
             baseExpression = Config.pickedStringBaseExpression;
         } else if (instrument.type == InstrumentType.soundfont) {
             baseExpression = 0.35;
+        } else if (instrument.type == InstrumentType.sfx) {
+            baseExpression = 1.0;
+            expressionReferencePitch = 0;
+            pitchDamping = 1_000_000_000;
+            basePitch = 0;
         } else if (instrument.type == InstrumentType.mod) {
             baseExpression = 1.0;
             expressionReferencePitch = 0;
@@ -12173,7 +12402,10 @@ export class Synth {
             tone.operatorWaves[i] = Synth.getOperatorWave(instrument.operators[i].waveform, instrument.operators[i].pulseWidth);
         }
 
-        if (released) {
+        if (released && instrument.type == InstrumentType.sfx && instrument.sfxPlaybackMode == 0) {
+            intervalStart = intervalEnd = tone.lastInterval;
+            fadeExpressionStart = fadeExpressionEnd = 1.0;
+        } else if (released) {
             const startTicksSinceReleased: number = tone.ticksSinceReleased;
             const endTicksSinceReleased: number = tone.ticksSinceReleased + 1.0;
             intervalStart = intervalEnd = tone.lastInterval;
@@ -12221,7 +12453,9 @@ export class Synth {
             intervalEnd = startPin.interval + (endPin.interval - startPin.interval) * pinRatioEnd;
             tone.lastInterval = intervalEnd;
 
-            if ((!transition.isSeamless && !tone.forceContinueAtEnd) || nextNote == null) {
+            const oneShotSfxActive: boolean = instrument.type == InstrumentType.sfx && instrument.sfxPlaybackMode == 0;
+
+            if (!oneShotSfxActive && ((!transition.isSeamless && !tone.forceContinueAtEnd) || nextNote == null)) {
                 const fadeOutTicks: number = -instrument.getFadeOutTicks();
                 if (fadeOutTicks > 0.0) {
                     // If the tone should fade out before the end of the note, do so here.
@@ -12242,7 +12476,7 @@ export class Synth {
                 }
             }
 
-            if (tickTimeEnd >= noteEndTick && (transition.name == "sudden" || transition.name == "smooth")) {
+            if (!oneShotSfxActive && tickTimeEnd >= noteEndTick && (transition.name == "sudden" || transition.name == "smooth")) {
                 fadeExpressionEnd = 0.0;
                 toneIsOnLastTick = true;
             }
@@ -12787,7 +13021,10 @@ export class Synth {
             }
 
             const startFreq: number = Instrument.frequencyFromPitch(startPitch);
-            if (instrument.type == InstrumentType.soundfont) {
+            if (instrument.type == InstrumentType.sfx) {
+                tone.phaseDeltas[0] = 0.0;
+                tone.phaseDeltaScales[0] = 1.0;
+            } else if (instrument.type == InstrumentType.soundfont) {
                 const soundFont = SoundFontLibrary.get(instrument.soundFontUrl);
                 if (soundFont != null) {
                     if (tone.soundFontZone == null || tone.atNoteStart) {
@@ -13225,6 +13462,8 @@ export class Synth {
             return Synth.drumsetSynth;
         } else if (instrument.type == InstrumentType.soundfont) {
             return Synth.soundFontSynth;
+        } else if (instrument.type == InstrumentType.sfx) {
+            return Synth.sfxSynth;
         } else if (instrument.type == InstrumentType.mod) {
             return Synth.modSynth;
         } else if (instrument.type == InstrumentType.fm6op) {
@@ -15381,6 +15620,69 @@ export class Synth {
 
         tone.phases[0] = phase / Config.spectrumNoiseLength;
         tone.phaseDeltas[0] = phaseDelta * referenceDelta;
+        tone.expression = expression;
+
+        synth.sanitizeFilters(filters);
+        tone.initialNoteFilterInput1 = initialFilterInput1;
+        tone.initialNoteFilterInput2 = initialFilterInput2;
+    }
+
+    private static sfxSynth(synth: Synth, bufferIndex: number, roundedSamplesPerTick: number, tone: Tone, instrumentState: InstrumentState): void {
+        const sample: SfxData | null = instrumentState.sfxSample;
+        if (sample == null) {
+            tone.isOnLastTick = true;
+            return;
+        }
+
+        const data: Float32Array = synth.tempMonoInstrumentSampleBuffer!;
+        const wave: Float32Array = sample.samples;
+        const waveLength: number = wave.length;
+
+        if (waveLength <= 0 || sample.sampleRate <= 0) {
+            tone.isOnLastTick = true;
+            return;
+        }
+
+        let phase: number = Math.max(0.0, tone.phases[0] * waveLength);
+        const phaseDelta: number = sample.sampleRate / synth.samplesPerSecond;
+        let expression: number = +tone.expression;
+        const expressionDelta: number = +tone.expressionDelta;
+
+        const filters: DynamicBiquadFilter[] = tone.noteFilters;
+        const filterCount: number = tone.noteFilterCount | 0;
+        let initialFilterInput1: number = +tone.initialNoteFilterInput1;
+        let initialFilterInput2: number = +tone.initialNoteFilterInput2;
+        const applyFilters: Function = Synth.applyFilters;
+
+        const stopIndex: number = bufferIndex + roundedSamplesPerTick;
+
+        for (let sampleIndex: number = bufferIndex; sampleIndex < stopIndex; sampleIndex++) {
+            if (phase >= waveLength) {
+                tone.isOnLastTick = true;
+                break;
+            }
+
+            let inputSample: number;
+
+            if (phase < waveLength - 1) {
+                const phaseInt: number = Math.floor(phase);
+                const ratio: number = phase - phaseInt;
+                const first: number = wave[phaseInt];
+                inputSample = first + (wave[phaseInt + 1] - first) * ratio;
+            } else {
+                inputSample = wave[waveLength - 1];
+            }
+
+            const filteredSample: number = applyFilters(inputSample, initialFilterInput1, initialFilterInput2, filterCount, filters);
+            initialFilterInput2 = initialFilterInput1;
+            initialFilterInput1 = inputSample;
+            data[sampleIndex] += filteredSample * expression;
+
+            phase += phaseDelta;
+            expression += expressionDelta;
+        }
+
+        tone.phases[0] = phase / waveLength;
         tone.expression = expression;
 
         synth.sanitizeFilters(filters);

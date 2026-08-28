@@ -52,6 +52,7 @@ export class EditorConfig {
                 { name: TypePresets[InstrumentType.customChipWave], customType: InstrumentType.customChipWave },
                 { name: TypePresets[InstrumentType.fm6op], customType: InstrumentType.fm6op },
                 { name: TypePresets[InstrumentType.soundfont], customType: InstrumentType.soundfont },
+                { name: TypePresets[InstrumentType.sfx], customType: InstrumentType.sfx },
             ])
         },
         {

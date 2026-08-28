@@ -1,5 +1,5 @@
 import { Config, InstrumentType } from "../synth/SynthConfig";
-import { Channel, Instrument, Note, Pattern } from "../synth/synth";
+import { Channel, Instrument, Note, NoteType, Pattern } from "../synth/synth";
 
 const patternBase: number = 20_480;
 const maxFlpFileBytes: number = 20 * 1_024 * 1_024;
@@ -112,6 +112,7 @@ interface FlChannelInfo {
     mono: boolean;
     portamento: boolean;
     portamentoTicks: number;
+    samplePath: string;
 }
 
 interface FlNote {
@@ -132,7 +133,8 @@ interface FlPattern {
 
 interface PlaylistClip {
     position: number;
-    patternId: number;
+    patternId: number | null;
+    rackChannel: number | null;
     length: number;
     trackReverseIndex: number;
 }
@@ -278,7 +280,17 @@ function parsePlaylist(bytes: Uint8Array): PlaylistClip[] {
         const length: number = readUint32(bytes, offset + 8);
         const trackReverseIndex: number = readUint16(bytes, offset + 12);
 
-        if (itemIndex < patternBase) continue;
+        if (itemIndex <= patternBase) {
+            clips.push({
+                position,
+                patternId: null,
+                rackChannel: itemIndex,
+                length,
+                trackReverseIndex,
+            });
+            clipCount++;
+            continue;
+        }
 
         const patternId: number = itemIndex - patternBase;
         if (patternId <= 0) continue;
@@ -286,6 +298,7 @@ function parsePlaylist(bytes: Uint8Array): PlaylistClip[] {
         clips.push({
             position,
             patternId,
+            rackChannel: null,
             length,
             trackReverseIndex,
         });
@@ -306,6 +319,7 @@ function getOrCreateChannel(channels: Map<number, FlChannelInfo>, index: number)
             mono: false,
             portamento: false,
             portamentoTicks: 6,
+            samplePath: "",
         };
         channels.set(index, channel);
     }
@@ -315,6 +329,12 @@ function getOrCreateChannel(channels: Map<number, FlChannelInfo>, index: number)
 
 function looksLikeAbyssDrumChannel(name: string): boolean {
     return /^Drum\s+\d+/i.test(name.trim());
+}
+
+function sampleNameFromPath(path: string): string {
+    const normalized: string = path.replace(/\\/g, "/");
+    const pieces: string[] = normalized.split("/");
+    return pieces[pieces.length - 1] || path || "Audio";
 }
 
 function compactChannels(channels: Channel[], maxLength: number): void {
@@ -534,6 +554,12 @@ export function importFlStudioProject(buffer: ArrayBuffer): FlpImportResult {
                 }
                 break;
 
+            case 196:
+                if (currentChannel >= 0 && bytesValue != null) {
+                    getOrCreateChannel(channels, currentChannel).samplePath = decodeText(bytesValue).trim();
+                }
+                break;
+
             case 194:
                 if (bytesValue != null) {
                     const decoded: string = decodeText(bytesValue).trim();
@@ -630,6 +656,7 @@ export function importFlStudioProject(buffer: ArrayBuffer): FlpImportResult {
             clips.push({
                 position,
                 patternId: pattern.id,
+                rackChannel: null,
                 length: patternLength,
                 trackReverseIndex: 0,
             });
@@ -643,6 +670,47 @@ export function importFlStudioProject(buffer: ArrayBuffer): FlpImportResult {
     let expandedNoteCount: number = 0;
 
     for (const clip of clips) {
+        if (clip.rackChannel != null) {
+            const info: FlChannelInfo = getOrCreateChannel(channels, clip.rackChannel);
+
+            // FL playlist Channel items include Audio Clips and Automation Clips.
+            // Only channels with an actual sample path become AbyssBox SFX triggers.
+            if (info.samplePath.length == 0) continue;
+
+            if (!placedByRack.has(clip.rackChannel)) {
+                if (placedByRack.size >= maxImportedRackChannels) continue;
+                placedByRack.set(clip.rackChannel, []);
+            }
+
+            const clipLength: number = Math.max(1, clip.length);
+            const clipEnd: number = clip.position + clipLength;
+            totalTicks = Math.max(totalTicks, clipEnd);
+
+            // One-shot SFX only need a trigger-sized note. Keeping it short prevents
+            // a playlist audio clip from retriggering when the generated note crosses a bar.
+            const triggerLength: number = Math.max(1, Math.min(Math.round(ticksPerPart), clipLength));
+
+            expandedNoteCount++;
+            if (expandedNoteCount > maxExpandedNotes) {
+                throw new Error("This FL Studio arrangement contains too many notes/audio clips to import safely.");
+            }
+
+            placedByRack.get(clip.rackChannel)!.push({
+                position: 0,
+                flags: 0,
+                rackChannel: clip.rackChannel,
+                length: triggerLength,
+                key: Config.keys[0].basePitch,
+                velocity: 100,
+                start: clip.position,
+                end: clip.position + triggerLength,
+            });
+
+            continue;
+        }
+
+        if (clip.patternId == null) continue;
+
         const pattern: FlPattern | undefined = patterns.get(clip.patternId);
         if (pattern == undefined) continue;
 
@@ -684,7 +752,7 @@ export function importFlStudioProject(buffer: ArrayBuffer): FlpImportResult {
     }
 
     if (placedByRack.size == 0) {
-        throw new Error("No piano-roll notes were found in this FL Studio project.");
+        throw new Error("No importable piano-roll notes or audio clips were found in this FL Studio project.");
     }
 
     const totalParts: number = Math.max(1, Math.ceil(totalTicks / ticksPerPart));
@@ -704,15 +772,23 @@ export function importFlStudioProject(buffer: ArrayBuffer): FlpImportResult {
         const info: FlChannelInfo = getOrCreateChannel(channels, rackIndex);
         const sourceNotes: PlacedNote[] = placedByRack.get(rackIndex)!;
         const isNoise: boolean = looksLikeAbyssDrumChannel(info.name);
+        const isSfx: boolean = !isNoise && info.samplePath.length > 0;
 
         const channel: Channel = new Channel();
         const instrument: Instrument = new Instrument(isNoise, false);
         instrument.setTypeAndReset(
-            isNoise ? InstrumentType.noise : InstrumentType.chip,
+            isSfx ? InstrumentType.sfx : (isNoise ? InstrumentType.noise : InstrumentType.chip),
             isNoise,
             false,
         );
         instrument.chord = 0;
+
+        if (isSfx) {
+            instrument.sfxSampleId = "";
+            instrument.sfxSourcePath = info.samplePath;
+            instrument.sfxSampleName = sampleNameFromPath(info.samplePath);
+            instrument.sfxPlaybackMode = 0;
+        }
 
         const customInstrument: any = instrument as any;
         customInstrument.voiceMode = info.mono ? 1 : 0;
@@ -721,7 +797,9 @@ export function importFlStudioProject(buffer: ArrayBuffer): FlpImportResult {
         customInstrument.portamentoMode = 0;
 
         channel.instruments.push(instrument);
-        (channel as any).name = info.name;
+        (channel as any).name = isSfx && /^Channel\s+\d+$/i.test(info.name.trim())
+            ? "SFX - " + instrument.sfxSampleName
+            : info.name;
 
         for (let bar: number = 0; bar < totalBars; bar++) {
             channel.bars.push(0);
@@ -770,7 +848,7 @@ export function importFlStudioProject(buffer: ArrayBuffer): FlpImportResult {
                 Config.noteSizeMax,
             );
 
-            if (!isNoise) {
+            if (!isNoise && !isSfx) {
                 pitchSum += pitch;
                 pitchCount++;
             }
@@ -787,8 +865,9 @@ export function importFlStudioProject(buffer: ArrayBuffer): FlpImportResult {
 
                 note.continuesLastPattern = bar > firstBar;
 
-                const customNote: any = note as any;
-                customNote.noteType = (sourceNote.flags & (1 << 3)) != 0 ? 1 : 0;
+                note.noteType = !isSfx && (sourceNote.flags & (1 << 3)) != 0
+                    ? NoteType.slide
+                    : NoteType.normal;
 
                 pattern.notes.push(note);
             }

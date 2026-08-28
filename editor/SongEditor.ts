@@ -17,6 +17,7 @@ import { EuclideanRhythmPrompt } from "./EuclidgenRhythmPrompt";
 import "./Layout"; // Imported here for the sake of ensuring this code is transpiled early.
 import { Instrument, Channel, Synth, clamp } from "../synth/synth";
 import { SoundFontData, SoundFontLibrary, normalizeSoundFontUrl } from "../synth/SoundFont";
+import { SfxData, SfxLibrary, sfxNameFromPath } from "../synth/Sfx";
 import { HTML, SVG } from "imperative-html/dist/esm/elements-strict";
 import { Preferences } from "./Preferences";
 import { HarmonicsEditor, HarmonicsEditorPrompt } from "./HarmonicsEditor";
@@ -66,6 +67,50 @@ const { button, div, input, select, span, optgroup, option, canvas} = HTML;
 
 const beepboxEditorContainer: HTMLElement = document.getElementById("beepboxEditorContainer")!;
 
+const fixedSettingsWidthStyle: HTMLStyleElement = document.head.appendChild(document.createElement("style"));
+fixedSettingsWidthStyle.textContent = `
+@media (min-width: 711px) {
+    .beepboxEditor {
+        grid-template-columns: minmax(0, 1fr) var(--settings-area-width) !important;
+    }
+
+    .beepboxEditor .settings-area {
+        width: var(--settings-area-width) !important;
+        min-width: 0 !important;
+        max-width: var(--settings-area-width) !important;
+    }
+
+    .beepboxEditor .instrument-settings-area,
+    .beepboxEditor .song-settings-area,
+    .beepboxEditor .editor-controls,
+    .beepboxEditor .selectRow,
+    .beepboxEditor .instrument-bar,
+    .beepboxEditor .selectContainer {
+        min-width: 0 !important;
+        max-width: 100% !important;
+    }
+
+    .beepboxEditor .selectRow > *,
+    .beepboxEditor .instrument-bar > * {
+        min-width: 0 !important;
+    }
+
+    .beepboxEditor select,
+    .beepboxEditor button,
+    .beepboxEditor input {
+        max-width: 100%;
+    }
+
+    #instrumentSettingsText {
+        min-width: 0 !important;
+        max-width: 100% !important;
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
+        white-space: nowrap !important;
+    }
+}
+`;
+
 function buildOptions(menu: HTMLSelectElement, items: ReadonlyArray<string | number>): HTMLSelectElement {
     for (let index: number = 0; index < items.length; index++) {
         menu.appendChild(option({ value: index }, items[index]));
@@ -106,6 +151,7 @@ function buildPresetOptions(isNoise: boolean, idSet: string): HTMLSelectElement 
         menu.appendChild(option({ value: InstrumentType.harmonics }, EditorConfig.valueToPreset(InstrumentType.harmonics)!.name));
         menu.appendChild(option({ value: InstrumentType.pickedString }, EditorConfig.valueToPreset(InstrumentType.pickedString)!.name));
         menu.appendChild(option({ value: InstrumentType.soundfont }, EditorConfig.instrumentToPreset(InstrumentType.soundfont)!.name));
+        menu.appendChild(option({ value: InstrumentType.sfx }, EditorConfig.instrumentToPreset(InstrumentType.sfx)!.name));
         menu.appendChild(option({ value: InstrumentType.spectrum }, EditorConfig.valueToPreset(InstrumentType.spectrum)!.name));
         menu.appendChild(option({ value: InstrumentType.noise }, EditorConfig.valueToPreset(InstrumentType.noise)!.name));
     }
@@ -1399,9 +1445,22 @@ export class SongEditor {
             this._instrumentImportButton,
         ),
     );
-    private readonly _instrumentSettingsTextRow: HTMLDivElement = div({ id: "instrumentSettingsText", style: `padding: 3px 0; max-width: 15em; text-align: center; color: ${ColorConfig.secondaryText};` },
+    private readonly _instrumentSettingsTextRow: HTMLDivElement = div({
+        id: "instrumentSettingsText",
+        style: `padding: 3px 0; max-width: 15em; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: center; color: ${ColorConfig.secondaryText};`
+    },
         "Instrument Settings"
     );
+    private _getSettingsHeaderName(name: string, fallback: string): string {
+        const cleanName: string = name.trim();
+        if (cleanName == "") return fallback;
+
+        const maxLength: number = 28;
+        return cleanName.length > maxLength
+            ? cleanName.substring(0, maxLength - 1) + "…"
+            : cleanName;
+    }
+
     private readonly _instrumentTypeSelectRow: HTMLDivElement = div({ class: "selectRow", id: "typeSelectRow" },
         span({ class: "tip", onclick: () => this._openPrompt("instrumentType") }, "Type:"),
         div(
@@ -1442,6 +1501,34 @@ export class SongEditor {
         ),
     );
 
+    private readonly _sfxFileInput: HTMLInputElement = input({
+        type: "file",
+        style: "position: fixed; left: -10000px; top: 0; width: 1px; height: 1px; opacity: 0;",
+    });
+    private readonly _sfxLoadButton: HTMLButtonElement = button({ type: "button", style: "width: 100%; font-size: x-small;" }, "Load / Relink Audio");
+    private readonly _sfxName: HTMLSpanElement = span({
+        style: `display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: x-small; color: ${ColorConfig.secondaryText};`
+    }, "No SFX loaded");
+    private readonly _sfxPlaybackSelect: HTMLSelectElement = select(
+        option({ value: 0 }, "One Shot"),
+        option({ value: 1 }, "Gate"),
+    );
+    private readonly _sfxGroup: HTMLDivElement = div({ class: "editor-controls", style: "display: none;" },
+        div({ class: "selectRow" },
+            span({ class: "tip", title: "Loads a local audio file. In One Shot mode the sample keeps playing after the trigger note ends." }, "SFX:"),
+            div({ class: "instrument-bar" }, this._sfxLoadButton),
+            this._sfxFileInput,
+        ),
+        div({ class: "selectRow" },
+            span({ class: "tip" }, "File:"),
+            div({ class: "instrument-bar", style: "min-width: 0; overflow: hidden;" }, this._sfxName),
+        ),
+        div({ class: "selectRow" },
+            span({ class: "tip", title: "One Shot plays the entire audio file. Gate follows the note length." }, "Playback:"),
+            div({ class: "selectContainer" }, this._sfxPlaybackSelect),
+        ),
+    );
+
     private selectedPatternCounter: HTMLDivElement = div({style:"margin:5px; pointer-events: none;"},this._doc.selection.boxSelectionWidth*this._doc.selection.boxSelectionHeight);
     private selectedPatternDiv: HTMLDivElement = div({style:"background: var(--ui-widget-background); font-weight: bold; border-radius: 5px; height: 32px; position: absolute; font-size: 20px; text-align: center; align-content: center;", title:"The total number of patterns you have selected in the track editor."}, this.selectedPatternCounter);
 
@@ -1469,6 +1556,7 @@ export class SongEditor {
         // this._instrumentExportGroup,
         this._instrumentTypeSelectRow,
         this._soundFontGroup,
+        this._sfxGroup,
         this._instrumentVolumeSliderRow,
         //this._customizeInstrumentButton,
         this._customInstrumentSettingsGroup,
@@ -1660,6 +1748,8 @@ export class SongEditor {
     private _highlightedInstrumentIndex: number = -1;
     private readonly _loadingSoundFonts: Set<string> = new Set();
     private readonly _failedSoundFonts: Map<string, string> = new Map();
+    private readonly _loadingSfx: Set<string> = new Set();
+    private readonly _failedSfx: Map<string, string> = new Map();
     private _renderedInstrumentCount: number = 0;
     private _renderedIsPlaying: boolean = false;
     private _renderedIsRecording: boolean = false;
@@ -1868,8 +1958,10 @@ export class SongEditor {
 
         if (this._isAppleTouchDevice) {
             this._soundFontFileInput.removeAttribute("accept");
+            this._sfxFileInput.removeAttribute("accept");
         } else {
             this._soundFontFileInput.accept = ".sf2,.SF2,audio/sf2,audio/x-sf2,application/octet-stream";
+            this._sfxFileInput.accept = ".wav,.mp3,.ogg,.opus,.flac,.m4a,.aac,audio/*";
         }
 
         this._soundFontLoadButton.addEventListener("click", this._whenOpenSoundFontFile);
@@ -1877,6 +1969,9 @@ export class SongEditor {
         this._soundFontFileInput.addEventListener("change", this._whenLoadSoundFontFile);
         this._soundFontBankSelect.addEventListener("change", this._whenSetSoundFontBank);
         this._soundFontPresetSelect.addEventListener("change", this._whenSetSoundFontPreset);
+        this._sfxLoadButton.addEventListener("click", this._whenOpenSfxFile);
+        this._sfxFileInput.addEventListener("change", this._whenLoadSfxFile);
+        this._sfxPlaybackSelect.addEventListener("change", this._whenSetSfxPlaybackMode);
 
         this._voiceModeSelect.addEventListener("change", this._whenSetVoiceMode);
         this._portamentoBox.addEventListener("input", this._whenSetPortamento);
@@ -3192,12 +3287,9 @@ export class SongEditor {
             this._instrumentSettingsGroup.insertBefore(this._instrumentsButtonRow, this._instrumentSettingsGroup.firstChild);
             this._instrumentSettingsGroup.insertBefore(this._instrumentSettingsTextRow, this._instrumentSettingsGroup.firstChild);
 
-            if (this._doc.song.channels[this._doc.channel].name == "") {
-                this._instrumentSettingsTextRow.textContent = "Instrument Settings";
-            }
-            else {
-                this._instrumentSettingsTextRow.textContent = this._doc.song.channels[this._doc.channel].name;
-            }
+            const currentChannelName: string = this._doc.song.channels[this._doc.channel].name;
+            this._instrumentSettingsTextRow.textContent = this._getSettingsHeaderName(currentChannelName, "Instrument Settings");
+            this._instrumentSettingsTextRow.title = currentChannelName;
 
             this._modulatorGroup.style.display = "none";
 
@@ -3247,6 +3339,34 @@ export class SongEditor {
                     }
                 } else {
                     this._setSoundFontMenusLoading("Load a SoundFont");
+                }
+            }
+
+            const isSfx: boolean = instrument.type == InstrumentType.sfx;
+            this._sfxGroup.style.display = isSfx ? "" : "none";
+            if (isSfx) {
+                this._sfxPlaybackSelect.value = Math.max(0, Math.min(1, instrument.sfxPlaybackMode | 0)) + "";
+
+                const loadedSfx: SfxData | null = SfxLibrary.get(instrument.sfxSampleId);
+
+                if (loadedSfx != null) {
+                    this._failedSfx.delete(instrument.sfxSampleId);
+                    this._sfxName.textContent = instrument.sfxSampleName || loadedSfx.name;
+                } else if (instrument.sfxSampleId != "") {
+                    const failed: string | undefined = this._failedSfx.get(instrument.sfxSampleId);
+
+                    if (failed != undefined) {
+                        this._sfxName.textContent = failed;
+                    } else {
+                        this._sfxName.textContent = SfxLibrary.isLoading(instrument.sfxSampleId)
+                            ? "Loading " + (instrument.sfxSampleName || "audio") + "..."
+                            : (instrument.sfxSampleName || "Loading audio...");
+                        void this._loadSfxIfNeeded(instrument);
+                    }
+                } else if (instrument.sfxSourcePath != "") {
+                    this._sfxName.textContent = "Missing: " + (instrument.sfxSampleName || sfxNameFromPath(instrument.sfxSourcePath)) + " — Relink";
+                } else {
+                    this._sfxName.textContent = "No SFX loaded";
                 }
             }
 
@@ -3856,12 +3976,9 @@ export class SongEditor {
 
             this._modulatorGroup.insertBefore(this._instrumentsButtonRow, this._modulatorGroup.firstChild);
             this._modulatorGroup.insertBefore(this._instrumentSettingsTextRow, this._modulatorGroup.firstChild);
-            if (this._doc.song.channels[this._doc.channel].name == "") {
-                this._instrumentSettingsTextRow.textContent = "Modulator Settings";
-            }
-            else {
-                this._instrumentSettingsTextRow.textContent = this._doc.song.channels[this._doc.channel].name;
-            }
+            const currentChannelName: string = this._doc.song.channels[this._doc.channel].name;
+            this._instrumentSettingsTextRow.textContent = this._getSettingsHeaderName(currentChannelName, "Modulator Settings");
+            this._instrumentSettingsTextRow.title = currentChannelName;
 
             if (this._doc.prefs.instrumentSettingsSimplifier == true) {
                     this._instOptionsDiv.style.display = "none";
@@ -4462,6 +4579,7 @@ export class SongEditor {
             this._instrumentVolumeSliderRow.style.display = "none";
             this._instrumentTypeSelectRow.style.setProperty("display", "none");
             this._soundFontGroup.style.display = "none";
+            this._sfxGroup.style.display = "none";
 
             this._instrumentSettingsGroup.style.color = ColorConfig.getChannelColor(this._doc.song, this._doc.channel).primaryNote;
 
@@ -6062,6 +6180,95 @@ export class SongEditor {
 
     private _getCurrentSoundFontInstrument = (): Instrument => {
         return this._doc.song.channels[this._doc.channel].instruments[this._doc.getCurrentInstrument()];
+    }
+
+    private _getCurrentSfxInstrument = (): Instrument => {
+        return this._doc.song.channels[this._doc.channel].instruments[this._doc.getCurrentInstrument()];
+    }
+
+    private _loadSfxIfNeeded = async (instrument: Instrument): Promise<void> => {
+        if (instrument.type != InstrumentType.sfx || instrument.sfxSampleId == "") return;
+
+        const id: string = instrument.sfxSampleId;
+        if (SfxLibrary.get(id) != null || this._loadingSfx.has(id)) return;
+
+        this._loadingSfx.add(id);
+
+        try {
+            const sample: SfxData = await SfxLibrary.loadById(id, instrument.sfxSampleName);
+
+            if (instrument.type != InstrumentType.sfx || instrument.sfxSampleId != id) return;
+
+            this._failedSfx.delete(id);
+            if (instrument.sfxSampleName == "") instrument.sfxSampleName = sample.name;
+            this._sfxName.textContent = instrument.sfxSampleName || sample.name;
+            this._doc.notifier.changed();
+        } catch (error) {
+            if (instrument.type == InstrumentType.sfx && instrument.sfxSampleId == id) {
+                const message: string = error instanceof Error ? error.message : "Could not load SFX";
+                this._failedSfx.set(id, message);
+                this._sfxName.textContent = message;
+            }
+        } finally {
+            this._loadingSfx.delete(id);
+        }
+    }
+
+    private _whenOpenSfxFile = (): void => {
+        this._sfxFileInput.value = "";
+
+        if (this._isAppleTouchDevice) {
+            this._sfxFileInput.removeAttribute("accept");
+        } else {
+            this._sfxFileInput.accept = ".wav,.mp3,.ogg,.opus,.flac,.m4a,.aac,audio/*";
+        }
+
+        const picker = this._sfxFileInput as HTMLInputElement & { showPicker?: () => void };
+
+        try {
+            if (picker.showPicker != undefined) {
+                picker.showPicker();
+                return;
+            }
+        } catch {
+        }
+
+        this._sfxFileInput.click();
+    }
+
+    private _whenLoadSfxFile = async (): Promise<void> => {
+        const file: File | null = this._sfxFileInput.files != null ? this._sfxFileInput.files[0] : null;
+        if (file == null) return;
+
+        const instrument: Instrument = this._getCurrentSfxInstrument();
+        if (instrument.type != InstrumentType.sfx) return;
+
+        this._sfxName.textContent = "Reading " + file.name + "...";
+
+        try {
+            const sample: SfxData = await SfxLibrary.loadFromFile(file);
+
+            if (instrument.type != InstrumentType.sfx) return;
+
+            instrument.sfxSampleId = sample.id;
+            instrument.sfxSampleName = file.name;
+            instrument.sfxSourcePath = "";
+            this._failedSfx.delete(sample.id);
+            this._sfxName.textContent = file.name;
+            this._doc.notifier.changed();
+        } catch (error) {
+            this._sfxName.textContent = error instanceof Error ? error.message : "Could not load SFX";
+        } finally {
+            this._sfxFileInput.value = "";
+        }
+    }
+
+    private _whenSetSfxPlaybackMode = (): void => {
+        const instrument: Instrument = this._getCurrentSfxInstrument();
+        if (instrument.type != InstrumentType.sfx) return;
+
+        instrument.sfxPlaybackMode = Math.max(0, Math.min(1, parseInt(this._sfxPlaybackSelect.value) | 0));
+        this._doc.notifier.changed();
     }
 
     private _clearSoundFontSelect = (menu: HTMLSelectElement): void => {
