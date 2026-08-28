@@ -11,6 +11,7 @@ import { removeDuplicatePatterns, ChangeSong, ChangeReplacePatterns } from "./ch
 import { AnalogousDrum, analogousDrumMap, MidiChunkType, MidiFileFormat, MidiEventType, MidiControlEventMessage, MidiMetaEventMessage, MidiRegisteredParameterNumberMSB, MidiRegisteredParameterNumberLSB, midiVolumeToVolumeMult, midiExpressionToVolumeMult } from "./Midi";
 import { ArrayBufferReader } from "./ArrayBufferReader";
 import { ExportPrompt } from "./ExportPrompt";
+import { importFlStudioProject } from "./FlpImporter";
 
 	const {button, p, div, h2, input, select, option} = HTML;
 
@@ -18,7 +19,7 @@ export class ImportPrompt implements Prompt {
 		private exportStuff:ExportPrompt = new ExportPrompt(this._doc);
 		private readonly _importButton: HTMLButtonElement = button({ style: "border-image-source: none !important; height: auto; min-height: var(--button-size); margin: 0.5em; width:50%; color: var(--primary-text); border-bottom: solid; border-bottom-color: var(--link-accent);" }, "Import");
 		private readonly _exportButton: HTMLButtonElement = button({ style: "border-image-source: none !important; height: auto; min-height: var(--button-size); margin: 0.5em; width:50%; color: var(--secondary-text);" }, "Export");
-		private readonly _fileInput: HTMLInputElement = input({type: "file", accept: ".json,application/json,.mid,.midi,audio/midi,audio/x-midi"});
+		private readonly _fileInput: HTMLInputElement = input({type: "file", accept: ".json,application/json,.mid,.midi,audio/midi,audio/x-midi,.flp,application/octet-stream"});
 		private readonly _cancelButton: HTMLButtonElement = button({class: "cancelButton"});
 		private readonly _modeImportSelect: HTMLSelectElement = select({style: "width: 100%;"},
 			option({value: "auto"}, "Auto-detect mode (for json)"),
@@ -44,7 +45,7 @@ export class ImportPrompt implements Prompt {
 			"BeepBox songs can be exported and re-imported as .json files. You could also use other means to make .json files for BeepBox as long as they follow the same structure.",
 		),
 			p({style: "text-align: left; margin: 0.5em 0;"},
-			"BeepBox can also (crudely) import .mid files. There are many tools available for creating .mid files. Shorter and simpler songs are more likely to work well.",
+			"AbyssBox Pro can also import .mid files and FL Studio .flp projects. FLP import focuses on piano-roll notes, patterns, playlist timing, tempo, slide notes, and basic mono/portamento settings.",
 		),
 		// div({class: "selectContainer", style: "width: 100%;"}, "Import Mode (for json): ", this._modeImportSelect),
 			this._modeImportSelect,
@@ -155,6 +156,22 @@ export class ImportPrompt implements Prompt {
 				this._parseMidiFile(<ArrayBuffer>reader.result);
 			});
 			reader.readAsArrayBuffer(file);
+		} else if (extension == "flp") {
+			const safeFlpFileSize: number = 32 * 1_024 * 1_024;
+
+			if (file.size > safeFlpFileSize) {
+				window.alert(
+					"This FL Studio project is too large to import safely in the browser. "
+					+ "Try exporting a smaller FLP, MIDI, or separate stems/patterns.",
+				);
+				return;
+			}
+
+			const reader: FileReader = new FileReader();
+			reader.addEventListener("load", (): void => {
+				this._parseFlpFile(<ArrayBuffer>reader.result);
+			});
+			reader.readAsArrayBuffer(file);
 		} else {
 			console.error("Unrecognized file extension.");
 			return;
@@ -168,6 +185,202 @@ export class ImportPrompt implements Prompt {
 			if (files.length > 1) return;
 			this._fileInput.files = files;
 			this._whenFileSelected();
+	}
+
+
+
+	private _cloneImportChannel(channel: Channel, isNoise: boolean, isMod: boolean): Channel {
+		const clone: Channel = new Channel();
+		clone.octave = channel.octave;
+		clone.name = channel.name;
+		clone.muted = false;
+
+		for (const sourceInstrument of channel.instruments) {
+			const instrument: Instrument = new Instrument(isNoise, isMod);
+			instrument.fromJsonObject(
+				sourceInstrument.toJsonObject(),
+				isNoise,
+				isMod,
+				false,
+				false,
+				0,
+				Config.jsonFormat,
+			);
+			clone.instruments.push(instrument);
+		}
+
+		for (const sourcePattern of channel.patterns) {
+			const pattern: Pattern = new Pattern();
+			pattern.instruments.length = 0;
+			for (const instrumentIndex of sourcePattern.instruments) {
+				pattern.instruments.push(instrumentIndex);
+			}
+			pattern.notes = sourcePattern.cloneNotes();
+			clone.patterns.push(pattern);
+		}
+
+		for (const bar of channel.bars) {
+			clone.bars.push(bar);
+		}
+
+		return clone;
+	}
+
+
+	private _prepareFlpChannelsAtStart(
+		importedPitchChannels: Channel[],
+		importedNoiseChannels: Channel[],
+		importedModChannels: Channel[],
+	): { pitchChannels: Channel[], noiseChannels: Channel[], modChannels: Channel[], barCount: number } {
+		const oldBarCount: number = this._doc.song.barCount;
+
+		let importedBarCount: number = 0;
+		for (const channel of [...importedPitchChannels, ...importedNoiseChannels, ...importedModChannels]) {
+			importedBarCount = Math.max(importedBarCount, channel.bars.length);
+		}
+
+		if (importedBarCount <= 0) {
+			throw new Error("The FL Studio project did not contain any importable bars.");
+		}
+
+		const finalBarCount: number = Math.max(
+			1,
+			Math.min(Config.barCountMax, Math.max(oldBarCount, importedBarCount)),
+		);
+
+		const prepareGroup = (
+			sourceChannels: Channel[],
+			isNoise: boolean,
+			isMod: boolean,
+			maxChannels: number,
+		): Channel[] => {
+			const result: Channel[] = [];
+
+			for (let channelIndex: number = 0; channelIndex < sourceChannels.length; channelIndex++) {
+				if (result.length >= maxChannels) {
+					console.warn("Skipping an imported FL Studio channel because the AbyssBox channel limit was reached.");
+					break;
+				}
+
+				const channel: Channel = this._cloneImportChannel(
+					sourceChannels[channelIndex],
+					isNoise,
+					isMod,
+				);
+
+				if (channel.bars.length > finalBarCount) {
+					channel.bars.length = finalBarCount;
+				}
+
+				while (channel.bars.length < finalBarCount) {
+					channel.bars.push(0);
+				}
+
+				result.push(channel);
+			}
+
+			return result;
+		};
+
+		return {
+			pitchChannels: prepareGroup(
+				importedPitchChannels,
+				false,
+				false,
+				Config.pitchChannelCountMax,
+			),
+			noiseChannels: prepareGroup(
+				importedNoiseChannels,
+				true,
+				false,
+				Config.noiseChannelCountMax,
+			),
+			modChannels: prepareGroup(
+				importedModChannels,
+				false,
+				true,
+				Config.modChannelCountMax,
+			),
+			barCount: finalBarCount,
+		};
+	}
+
+	private _parseFlpFile(buffer: ArrayBuffer): void {
+		try {
+			const result = importFlStudioProject(buffer);
+			const imported = this._prepareFlpChannelsAtStart(
+				result.pitchChannels,
+				result.noiseChannels,
+				result.modChannels,
+			);
+
+			class ChangeImportFlp extends ChangeGroup {
+				constructor(doc: SongDocument) {
+					super();
+
+					const song: Song = doc.song;
+
+					removeDuplicatePatterns(imported.pitchChannels);
+					removeDuplicatePatterns(imported.noiseChannels);
+					removeDuplicatePatterns(imported.modChannels);
+
+					song.tempo = result.tempo;
+					song.beatsPerBar = result.beatsPerBar;
+					song.key = 0;
+					song.scale = 11;
+					song.rhythm = 1;
+					song.layeredInstruments = false;
+
+					if (
+						result.title.trim().length > 0
+						&& result.title != "Imported FL Studio Project"
+					) {
+						song.title = result.title.trim();
+					}
+
+					song.patternInstruments =
+						imported.pitchChannels.some((channel: Channel) => channel.instruments.length > 1)
+						|| imported.noiseChannels.some((channel: Channel) => channel.instruments.length > 1);
+
+					this.append(new ChangeReplacePatterns(
+						doc,
+						imported.pitchChannels,
+						imported.noiseChannels,
+						imported.modChannels,
+					));
+
+					// Keep at least as many bars as the song had before importing.
+					// The imported FL arrangement begins at bar 1; any remaining bars
+					// after the imported arrangement stay empty instead of disappearing.
+					for (const channel of song.channels) {
+						if (channel.bars.length > imported.barCount) {
+							channel.bars.length = imported.barCount;
+						}
+						while (channel.bars.length < imported.barCount) {
+							channel.bars.push(0);
+						}
+					}
+
+					song.barCount = imported.barCount;
+					song.loopStart = 0;
+					song.loopLength = song.barCount;
+
+					this._didSomething();
+					doc.notifier.changed();
+				}
+			}
+
+			this._doc.goBackToStart();
+			for (const channel of this._doc.song.channels) channel.muted = false;
+			this._doc.prompt = null;
+			this._doc.record(new ChangeImportFlp(this._doc), true, true);
+		} catch (error) {
+			console.error("Could not import FL Studio project:", error);
+			window.alert(
+				"Could not import this FL Studio project. "
+				+ (error instanceof Error ? error.message : String(error)),
+			);
+		}
 	}
 
 	private _parseMidiFile(buffer: ArrayBuffer): void {

@@ -87,7 +87,6 @@ class ChangeMoveIndependentNote extends UndoableChange {
 
     public constructor(
         private readonly _doc: SongDocument,
-        private readonly _pattern: Pattern,
         private readonly _note: Note,
         private readonly _newStart: number,
         private readonly _newEnd: number,
@@ -114,7 +113,6 @@ class ChangeMoveIndependentNote extends UndoableChange {
         this._note.start = this._newStart;
         this._note.end = this._newEnd;
         this._note.pitches = this._newPitches.concat();
-        this._pattern.notes.sort((a, b) => a.start == b.start ? a.pitches[0] - b.pitches[0] : a.start - b.start);
         this._doc.notifier.changed();
     }
 
@@ -122,9 +120,44 @@ class ChangeMoveIndependentNote extends UndoableChange {
         this._note.start = this._oldStart;
         this._note.end = this._oldEnd;
         this._note.pitches = this._oldPitches.concat();
-        this._pattern.notes.sort((a, b) => a.start == b.start ? a.pitches[0] - b.pitches[0] : a.start - b.start);
         this._doc.notifier.changed();
     }
+}
+
+
+let smoothButtonTweensInstalled: boolean = false;
+
+function installSmoothButtonTweens(): void {
+    if (smoothButtonTweensInstalled) return;
+    smoothButtonTweensInstalled = true;
+
+    const style: HTMLStyleElement = document.createElement("style");
+    style.textContent = `
+        button {
+            transform-origin: center;
+            transition:
+                transform 260ms cubic-bezier(0.16, 1, 0.3, 1),
+                filter 220ms ease,
+                opacity 220ms ease;
+        }
+
+        button:active {
+            transform: scale(0.965) translateY(1px);
+            filter: brightness(1.08);
+            transition:
+                transform 78ms cubic-bezier(0.32, 0, 0.67, 0),
+                filter 78ms ease;
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            button,
+            button:active {
+                transition: none !important;
+                transform: none !important;
+            }
+        }
+    `;
+    document.head.appendChild(style);
 }
 
 export class PatternEditor {
@@ -135,6 +168,7 @@ export class PatternEditor {
     private readonly _svgModBackground: SVGPatternElement = SVG.pattern({ id: "patternEditorModBackground" + this._barOffset, x: "0", y: "0", patternUnits: "userSpaceOnUse" });
     private readonly _svgBackground: SVGRectElement = SVG.rect({ id:"pitchEditorBackground", x: "0", y: "0", "pointer-events": "none", fill: "url(#patternEditorNoteBackground" + this._barOffset + ")" });
     private _svgNoteContainer: SVGSVGElement = SVG.svg();
+    private readonly _placementFxContainer: SVGGElement = document.createElementNS("http://www.w3.org/2000/svg", "g");
     private readonly _svgPlayhead: SVGRectElement = SVG.rect({ x: "0", y: "0", width: "4", fill: ColorConfig.playhead, "pointer-events": "none" });
     private readonly _selectionRect: SVGRectElement = SVG.rect({ class: "dashed-line dash-move", fill: ColorConfig.boxSelectionFill, stroke: ColorConfig.hoverPreview, "stroke-width": 2, "stroke-dasharray": "5, 3", "fill-opacity": "0.4", "pointer-events": "none", visibility: "hidden" });
     private readonly _svgPreview: SVGPathElement = SVG.path({ fill: "none", stroke: ColorConfig.hoverPreview, "stroke-width": "2", "pointer-events": "none" });
@@ -145,7 +179,7 @@ export class PatternEditor {
     private readonly _independentNotesInput: HTMLInputElement = HTML.input({ type: "checkbox" });
     private readonly _independentNotesControl: HTMLLabelElement = HTML.label(
         {
-            style: "display: none; position: absolute; right: 6px; top: 6px; z-index: 4; align-items: center; gap: 5px; padding: 4px 7px; border-radius: 4px; background: rgba(0, 0, 0, 0.55); font-size: 11px; cursor: pointer; user-select: none;",
+            style: "display: none; align-items: center; gap: 5px; padding: 3px 6px; border-radius: 4px; background: rgba(0, 0, 0, 0.30); font-size: 11px; cursor: pointer; user-select: none; opacity: 0.88; transform: scale(1); transition: opacity 160ms ease, transform 220ms cubic-bezier(0.16, 1, 0.3, 1), background-color 180ms ease;",
             title: "Keep notes on different pitches separate instead of combining them into one chord note.",
         },
         this._independentNotesInput,
@@ -155,7 +189,7 @@ export class PatternEditor {
     private readonly _mobileEditModeButton: HTMLButtonElement = HTML.button(
         {
             type: "button",
-            style: "display: none; position: absolute; right: 6px; top: 36px; z-index: 5; min-width: 58px; height: 26px; padding: 2px 7px; font-size: 11px; touch-action: manipulation;",
+            style: "display: none; min-width: 58px; height: 26px; padding: 2px 7px; font-size: 11px; touch-action: manipulation; opacity: 0.88; transform: scale(1); transition: opacity 160ms ease, transform 220ms cubic-bezier(0.16, 1, 0.3, 1);",
             title: "Switch between moving whole notes and editing pitch bends on touch devices.",
         },
         "Move",
@@ -164,7 +198,7 @@ export class PatternEditor {
     private readonly _snapSelect: HTMLSelectElement = document.createElement("select");
     private readonly _snapControl: HTMLDivElement = HTML.div(
         {
-            style: "display: none; position: absolute; right: 70px; top: 36px; z-index: 5; height: 26px; align-items: center; gap: 3px; padding: 2px 5px; border-radius: 4px; background: rgba(0, 0, 0, 0.55); font-size: 11px;",
+            style: "display: none; height: 26px; align-items: center; gap: 3px; padding: 2px 5px; border-radius: 4px; background: rgba(0, 0, 0, 0.30); font-size: 11px; opacity: 0.88; transform: scale(1); transition: opacity 160ms ease, transform 220ms cubic-bezier(0.16, 1, 0.3, 1), background-color 180ms ease;",
             title: "Piano roll snap. None uses the finest internal timing resolution.",
         },
         HTML.span({ style: "pointer-events: none;" }, "Snap:"),
@@ -174,11 +208,21 @@ export class PatternEditor {
     private readonly _noteTypeSelect: HTMLSelectElement = document.createElement("select");
     private readonly _noteTypeControl: HTMLDivElement = HTML.div(
         {
-            style: "display: none; position: absolute; right: 6px; top: 66px; z-index: 5; height: 26px; align-items: center; gap: 4px; padding: 2px 5px; border-radius: 4px; background: rgba(0, 0, 0, 0.55); font-size: 11px;",
+            style: "display: none; height: 26px; align-items: center; gap: 4px; padding: 2px 5px; border-radius: 4px; background: rgba(0, 0, 0, 0.30); font-size: 11px; opacity: 0.88; transform: scale(1); transition: opacity 160ms ease, transform 220ms cubic-bezier(0.16, 1, 0.3, 1), background-color 180ms ease;",
             title: "Choose what kind of note gets drawn.",
         },
         HTML.span({ style: "pointer-events: none;" }, "Note:"),
         this._noteTypeSelect,
+    );
+
+    private readonly _pianoRollToolbar: HTMLDivElement = HTML.div(
+        {
+            style: "display: none; flex: 0 0 auto; min-height: 34px; align-items: center; gap: 7px; padding: 4px 6px; overflow-x: auto; overflow-y: hidden; white-space: nowrap; box-sizing: border-box; background: rgba(0, 0, 0, 0.22); border-bottom: 1px solid rgba(255, 255, 255, 0.08);",
+        },
+        this._independentNotesControl,
+        this._snapControl,
+        this._mobileEditModeButton,
+        this._noteTypeControl,
     );
 
     public _svg: SVGSVGElement = SVG.svg({ id:'firstImage', style: `background-image: url(${getLocalStorageItem("customTheme", "")}); background-repeat: no-repeat; background-size: 100% 100%; background-color: ${ColorConfig.editorBackground}; touch-action: none; position: absolute;`, width: "100%", height: "100%" },
@@ -191,17 +235,20 @@ export class PatternEditor {
         this._svgNoteRangeIndicatorOverlay,
         this._selectionRect,
         this._svgNoteContainer,
+        this._placementFxContainer,
         this._svgPreview,
         this._svgPlayhead,
     );
-    public readonly container: HTMLDivElement = HTML.div(
-        { style: "height: 100%; overflow:hidden; position: relative; flex-grow: 1;" },
+    private readonly _pianoRollViewport: HTMLDivElement = HTML.div(
+        { style: "position: relative; flex: 1 1 auto; min-height: 0; overflow: hidden;" },
         this._svg,
         this.modDragValueLabel,
-        this._independentNotesControl,
-        this._snapControl,
-        this._mobileEditModeButton,
-        this._noteTypeControl,
+    );
+
+    public readonly container: HTMLDivElement = HTML.div(
+        { style: "height: 100%; min-height: 0; overflow: hidden; display: flex; flex-direction: column; flex-grow: 1;" },
+        this._pianoRollToolbar,
+        this._pianoRollViewport,
     );
 
     private readonly _defaultModBorder: number = 34;
@@ -250,6 +297,7 @@ export class PatternEditor {
     private _dragSize: number = 0;
     private _dragVisible: boolean = false;
     private _dragChange: UndoableChange | null = null;
+    private _placedNoteThisPress: boolean = false;
 
     private _movingIndependentNote: boolean = false;
     private _independentMoveNote: Note | null = null;
@@ -306,14 +354,45 @@ export class PatternEditor {
     private _followPlayheadBar: number = -1;
 
     constructor(private _doc: SongDocument, private _interactive: boolean, private _barOffset: number) {
+        installSmoothButtonTweens();
+
         this._independentNotesInput.checked = getLocalStorageItem("independentNotes", "true") != "false";
+        this._pianoRollToolbar.style.display = this._interactive ? "flex" : "none";
         this._independentNotesControl.style.display = this._interactive ? "flex" : "none";
         this._mobileEditModeButton.style.display = this._interactive && this._hasTouchInput ? "" : "none";
         this._snapControl.style.display = this._interactive ? "flex" : "none";
         this._noteTypeControl.style.display = this._interactive ? "flex" : "none";
 
-        if (!this._hasTouchInput) {
-            this._snapControl.style.right = "6px";
+        const smoothControls: HTMLElement[] = [
+            this._independentNotesControl,
+            this._snapControl,
+            this._noteTypeControl,
+            this._mobileEditModeButton,
+        ];
+
+        for (const control of smoothControls) {
+            control.addEventListener("mouseenter", () => {
+                control.style.opacity = "1";
+                control.style.transform = "scale(1.018)";
+            });
+
+            control.addEventListener("mouseleave", () => {
+                control.style.opacity = "0.88";
+                control.style.transform = "scale(1)";
+            });
+
+            control.addEventListener("pointerdown", () => {
+                control.style.transition = "transform 75ms cubic-bezier(0.32, 0, 0.67, 0), opacity 100ms ease";
+                control.style.transform = "scale(0.975)";
+            });
+
+            const releaseControl = (): void => {
+                control.style.transition = "opacity 160ms ease, transform 260ms cubic-bezier(0.16, 1, 0.3, 1), background-color 180ms ease";
+                control.style.transform = "scale(1)";
+            };
+
+            control.addEventListener("pointerup", releaseControl);
+            control.addEventListener("pointercancel", releaseControl);
         }
 
         const snapOptions: { value: string, label: string }[] = [
@@ -413,6 +492,7 @@ export class PatternEditor {
             this._updatePreview();
             window.requestAnimationFrame(this._animatePlayhead);
             this._svg.addEventListener("mousedown", this._whenMousePressed);
+            this._svg.addEventListener("contextmenu", (event: MouseEvent) => event.preventDefault());
             document.addEventListener("mousemove", this._whenMouseMoved);
             document.addEventListener("mouseup", this._whenCursorReleased);
             this._svg.addEventListener("mouseover", this._whenMouseOver);
@@ -440,6 +520,365 @@ export class PatternEditor {
         return (this._independentNotesInput.checked || this._getNoteEntryType() != NoteType.normal)
             && !this._doc.song.getChannelIsNoise(this._doc.channel)
             && !this._doc.song.getChannelIsMod(this._doc.channel);
+    }
+
+    private _useRoundedPianoNotes(): boolean {
+        return window.localStorage.getItem("flRoundedPianoNotes") == "true";
+    }
+
+    private _notesConflict(
+        existingNote: Note,
+        movingNote: Note | null,
+        start: number,
+        end: number,
+        pitches: number[],
+        noteType: NoteType,
+    ): boolean {
+        if (existingNote == movingNote) return false;
+        if (existingNote.end <= start || existingNote.start >= end) return false;
+
+        const existingType: NoteType = existingNote.noteType == undefined
+            ? NoteType.normal
+            : existingNote.noteType;
+
+        const placingSlide: boolean = noteType == NoteType.slide;
+        const existingSlide: boolean = existingType == NoteType.slide;
+
+        // FL-style slide notes are controller notes, so they may overlap playable notes.
+        if (placingSlide != existingSlide) return false;
+
+        // Only one slide controller may be active at a time in this implementation.
+        // This prevents two overlapping slide notes from fighting over the same voices.
+        if (placingSlide && existingSlide) return true;
+
+        // Normal/portamento notes may overlap in time as long as they are on different pitches.
+        for (const pitch of pitches) {
+            if (existingNote.pitches.indexOf(pitch) != -1) return true;
+        }
+
+        return false;
+    }
+
+    private _canPlaceIndependentNote(
+        pattern: Pattern,
+        movingNote: Note | null,
+        start: number,
+        end: number,
+        pitches: number[],
+        noteType: NoteType,
+    ): boolean {
+        if (!this._independentNotesEnabled()) return true;
+        if (end <= start || pitches.length == 0) return false;
+
+        for (const existingNote of pattern.notes) {
+            if (this._notesConflict(existingNote, movingNote, start, end, pitches, noteType)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private _spawnNotePlacementFx(note: Note): void {
+        if (!this._interactive || this._doc.song.getChannelIsMod(this._doc.channel)) return;
+
+        if (this._placementFxContainer.parentNode == this._svg) {
+            this._svg.insertBefore(this._placementFxContainer, this._svgPreview);
+        }
+
+        const channelColor = ColorConfig.getChannelColor(this._doc.song, this._doc.channel);
+        const fillColor: string = channelColor.primaryNote;
+        const outlineColor: string = fillColor;
+        const slideOffset: number = note.noteType == NoteType.slide ? 0.18 : 0.0;
+
+        for (const pitch of note.pitches) {
+            const group: SVGGElement = document.createElementNS("http://www.w3.org/2000/svg", "g");
+            group.setAttribute("pointer-events", "none");
+            group.style.setProperty("transform-box", "fill-box");
+            group.style.setProperty("transform-origin", "center");
+            group.style.setProperty("will-change", "transform, opacity");
+
+            const ghost: SVGPathElement = SVG.path();
+            ghost.setAttribute("fill", fillColor);
+            ghost.setAttribute("fill-opacity", "0.42");
+            ghost.setAttribute("stroke", outlineColor);
+            ghost.setAttribute("stroke-width", "1.2");
+            ghost.setAttribute("stroke-opacity", "0.72");
+            ghost.setAttribute("stroke-linejoin", "round");
+            ghost.setAttribute("stroke-linecap", "round");
+            ghost.setAttribute("pointer-events", "none");
+
+            this._drawNote(
+                ghost,
+                pitch + slideOffset,
+                note.start,
+                note.pins,
+                (this._pitchHeight - this._pitchBorder) / 2 + 1,
+                true,
+                this._octaveOffset,
+            );
+
+            const outline: SVGPathElement = SVG.path();
+            outline.setAttribute("fill", "none");
+            outline.setAttribute("stroke", outlineColor);
+            outline.setAttribute("stroke-width", "2");
+            outline.setAttribute("stroke-opacity", "0.78");
+            outline.setAttribute("stroke-linejoin", "round");
+            outline.setAttribute("stroke-linecap", "round");
+            outline.setAttribute("pointer-events", "none");
+
+            this._drawNote(
+                outline,
+                pitch + slideOffset,
+                note.start,
+                note.pins,
+                (this._pitchHeight - this._pitchBorder) / 2 + 1,
+                false,
+                this._octaveOffset,
+            );
+
+            group.appendChild(ghost);
+            group.appendChild(outline);
+            this._placementFxContainer.appendChild(group);
+
+            while (this._placementFxContainer.childElementCount > 48) {
+                this._placementFxContainer.firstElementChild?.remove();
+            }
+
+            group.style.opacity = "1";
+            group.style.transform = "scale(0.985)";
+
+            const duration: number = 520;
+            const startScale: number = 0.985;
+            const endScale: number = 1.145;
+
+            window.requestAnimationFrame(() => {
+                window.requestAnimationFrame(() => {
+                    const startedAt: number = performance.now();
+
+                    const animate = (now: number): void => {
+                        if (!group.isConnected) return;
+
+                        const progress: number = Math.max(0, Math.min(1, (now - startedAt) / duration));
+                        const eased: number = 1 - Math.pow(1 - progress, 3);
+
+                        group.style.opacity = "" + (1 - eased);
+                        group.style.transform = "scale(" + (startScale + (endScale - startScale) * eased) + ")";
+
+                        if (progress < 1) {
+                            window.requestAnimationFrame(animate);
+                        } else {
+                            group.remove();
+                        }
+                    };
+
+                    window.requestAnimationFrame(animate);
+                });
+            });
+        }
+    }
+
+    private _spawnNoteDeletionFx(note: Note, onlyPitch: number | null = null): void {
+        if (!this._interactive || this._doc.song.getChannelIsMod(this._doc.channel)) return;
+
+        if (this._placementFxContainer.parentNode == this._svg) {
+            this._svg.insertBefore(this._placementFxContainer, this._svgPreview);
+        }
+
+        const deleteColor: string = "#ff3b5c";
+        const slideOffset: number = note.noteType == NoteType.slide ? 0.18 : 0.0;
+        const pitches: number[] = onlyPitch == null ? note.pitches : [onlyPitch];
+
+        for (const pitch of pitches) {
+            const group: SVGGElement = document.createElementNS("http://www.w3.org/2000/svg", "g");
+            group.setAttribute("pointer-events", "none");
+            group.style.setProperty("transform-box", "fill-box");
+            group.style.setProperty("transform-origin", "center");
+            group.style.setProperty("will-change", "transform, opacity");
+
+            const ghost: SVGPathElement = SVG.path();
+            ghost.setAttribute("fill", deleteColor);
+            ghost.setAttribute("fill-opacity", "0.30");
+            ghost.setAttribute("stroke", deleteColor);
+            ghost.setAttribute("stroke-width", "1.3");
+            ghost.setAttribute("stroke-opacity", "0.9");
+            ghost.setAttribute("stroke-linejoin", "round");
+            ghost.setAttribute("stroke-linecap", "round");
+            ghost.setAttribute("pointer-events", "none");
+
+            this._drawNote(
+                ghost,
+                pitch + slideOffset,
+                note.start,
+                note.pins,
+                (this._pitchHeight - this._pitchBorder) / 2 + 1,
+                true,
+                this._octaveOffset,
+            );
+
+            const outline: SVGPathElement = SVG.path();
+            outline.setAttribute("fill", "none");
+            outline.setAttribute("stroke", deleteColor);
+            outline.setAttribute("stroke-width", "2.1");
+            outline.setAttribute("stroke-opacity", "1");
+            outline.setAttribute("stroke-linejoin", "round");
+            outline.setAttribute("stroke-linecap", "round");
+            outline.setAttribute("pointer-events", "none");
+
+            this._drawNote(
+                outline,
+                pitch + slideOffset,
+                note.start,
+                note.pins,
+                (this._pitchHeight - this._pitchBorder) / 2 + 1,
+                false,
+                this._octaveOffset,
+            );
+
+            group.appendChild(ghost);
+            group.appendChild(outline);
+            this._placementFxContainer.appendChild(group);
+
+            while (this._placementFxContainer.childElementCount > 48) {
+                this._placementFxContainer.firstElementChild?.remove();
+            }
+
+            group.style.opacity = "1";
+            group.style.transform = "scale(0.985)";
+
+            const duration: number = 520;
+            const startScale: number = 0.985;
+            const endScale: number = 1.15;
+
+            window.requestAnimationFrame(() => {
+                window.requestAnimationFrame(() => {
+                    const startedAt: number = performance.now();
+
+                    const animate = (now: number): void => {
+                        if (!group.isConnected) return;
+
+                        const progress: number = Math.max(0, Math.min(1, (now - startedAt) / duration));
+                        const eased: number = 1 - Math.pow(1 - progress, 3);
+
+                        group.style.opacity = "" + (1 - eased);
+                        group.style.transform = "scale(" + (startScale + (endScale - startScale) * eased) + ")";
+
+                        if (progress < 1) {
+                            window.requestAnimationFrame(animate);
+                        } else {
+                            group.remove();
+                        }
+                    };
+
+                    window.requestAnimationFrame(animate);
+                });
+            });
+        }
+    }
+
+    private _deleteNoteAtCursor(): boolean {
+        if (!this._cursor.valid || this._cursor.curNote == null) return false;
+
+        const pattern: Pattern | null = this._doc.getCurrentPattern(this._barOffset);
+        if (pattern == null) return false;
+
+        const targetNote: Note = this._cursor.curNote;
+        const sequence: ChangeSequence = new ChangeSequence();
+        sequence.append(new ChangePatternSelection(this._doc, 0, 0));
+
+        if (this._independentNotesEnabled()) {
+            this._spawnNoteDeletionFx(targetNote);
+
+            const targetPitch: number = targetNote.pitches[0];
+
+            for (let i: number = pattern.notes.length - 1; i >= 0; i--) {
+                const note: Note = pattern.notes[i];
+                const exactDuplicate: boolean =
+                    note.noteType == targetNote.noteType
+                    && note.pitches[0] == targetPitch
+                    && note.start == targetNote.start
+                    && note.end == targetNote.end;
+
+                if (note == targetNote || exactDuplicate) {
+                    sequence.append(new ChangeNoteAdded(this._doc, pattern, note, i, true));
+                }
+            }
+        } else {
+            const pitchIndex: number = targetNote.pitches.indexOf(this._cursor.pitch);
+
+            if (pitchIndex == -1) {
+                return false;
+            }
+
+            this._spawnNoteDeletionFx(targetNote, this._cursor.pitch);
+
+            if (targetNote.pitches.length == 1) {
+                sequence.append(new ChangeNoteAdded(
+                    this._doc,
+                    pattern,
+                    targetNote,
+                    this._cursor.curIndex,
+                    true,
+                ));
+            } else {
+                sequence.append(new ChangePitchAdded(
+                    this._doc,
+                    targetNote,
+                    this._cursor.pitch,
+                    pitchIndex,
+                    true,
+                ));
+            }
+        }
+
+        this._doc.record(sequence);
+        this._sortIndependentPattern(pattern);
+        this._updateCursorStatus();
+        this._updatePreview();
+        return true;
+    }
+
+    private _drawRoundedFlatNote(
+        svgElement: SVGPathElement,
+        pitch: number,
+        start: number,
+        pins: NotePin[],
+        radius: number,
+        showSize: boolean,
+        offset: number,
+    ): void {
+        const firstPin: NotePin = pins[0];
+        const lastPin: NotePin = pins[pins.length - 1];
+        const cap: number = this._doc.song.getVolumeCap(
+            this._doc.song.getChannelIsMod(this._doc.channel),
+            this._doc.channel,
+            this._doc.getCurrentInstrument(this._barOffset),
+            pitch,
+        );
+
+        const x1: number = this._partWidth * (start + firstPin.time) + 0.5;
+        const x2: number = this._partWidth * (start + lastPin.time) - 0.5;
+        const centerY: number = this._pitchToPixelHeight(pitch - offset);
+        const sizeRatio: number = showSize ? Math.max(0.18, Math.min(1.0, firstPin.size / Math.max(1, cap))) : 1.0;
+        const halfHeight: number = Math.max(1.5, radius * sizeRatio);
+        const top: number = centerY - halfHeight;
+        const bottom: number = centerY + halfHeight;
+        const width: number = Math.max(1, x2 - x1);
+        const corner: number = Math.max(1.5, Math.min(4.5, halfHeight * 0.72, width * 0.5));
+
+        const pathString: string =
+            "M " + prettyNumber(x1 + corner) + " " + prettyNumber(top)
+            + " H " + prettyNumber(x2 - corner)
+            + " Q " + prettyNumber(x2) + " " + prettyNumber(top) + " " + prettyNumber(x2) + " " + prettyNumber(top + corner)
+            + " V " + prettyNumber(bottom - corner)
+            + " Q " + prettyNumber(x2) + " " + prettyNumber(bottom) + " " + prettyNumber(x2 - corner) + " " + prettyNumber(bottom)
+            + " H " + prettyNumber(x1 + corner)
+            + " Q " + prettyNumber(x1) + " " + prettyNumber(bottom) + " " + prettyNumber(x1) + " " + prettyNumber(bottom - corner)
+            + " V " + prettyNumber(top + corner)
+            + " Q " + prettyNumber(x1) + " " + prettyNumber(top) + " " + prettyNumber(x1 + corner) + " " + prettyNumber(top)
+            + " Z";
+
+        svgElement.setAttribute("d", pathString);
     }
 
     private _noteMatchesPitchAtPart(note: Note, part: number, pitch: number): boolean {
@@ -471,16 +910,8 @@ export class PatternEditor {
 
 
     private _independentNoteHasCollision(pattern: Pattern, movingNote: Note, start: number, end: number, pitches: number[]): boolean {
-        for (const note of pattern.notes) {
-            if (note == movingNote) continue;
-            if (note.end <= start || note.start >= end) continue;
-
-            for (const pitch of pitches) {
-                if (note.pitches.indexOf(pitch) != -1) return true;
-            }
-        }
-
-        return false;
+        const noteType: NoteType = movingNote.noteType == undefined ? NoteType.normal : movingNote.noteType;
+        return !this._canPlaceIndependentNote(pattern, movingNote, start, end, pitches, noteType);
     }
 
     private _getIndependentEdgeMode(note: Note): "start" | "end" | null {
@@ -491,6 +922,18 @@ export class PatternEditor {
         if (Math.abs(this._mouseX - startX) <= edgePixels) return "start";
         if (Math.abs(this._mouseX - endX) <= edgePixels) return "end";
         return null;
+    }
+
+    private _sortIndependentPattern(pattern: Pattern): void {
+        pattern.notes.sort((a: Note, b: Note) => {
+            if (a.start != b.start) return a.start - b.start;
+
+            const aPitch: number = a.pitches.length > 0 ? a.pitches[0] : 0;
+            const bPitch: number = b.pitches.length > 0 ? b.pitches[0] : 0;
+            if (aPitch != bPitch) return aPitch - bPitch;
+
+            return a.end - b.end;
+        });
     }
 
     private _validateModDragLabelInput = (event: Event): void => {
@@ -607,8 +1050,16 @@ export class PatternEditor {
                 const mousePitch: number = Math.floor(this._findMousePitch(this._mouseY));
                 let insertIndex: number = 0;
 
+                const entryType: NoteType = this._getNoteEntryType();
+                const enteringSlide: boolean = entryType == NoteType.slide;
+
                 for (let i: number = 0; i < this._pattern.notes.length; i++) {
                     const note: Note = this._pattern.notes[i];
+                    const noteIsSlide: boolean = note.noteType == NoteType.slide;
+
+                    // Slide notes sit on top of regular notes. In Slide mode, edit/place
+                    // slide notes without grabbing the playable note underneath them.
+                    if (enteringSlide != noteIsSlide) continue;
 
                     if (note.start < this._cursor.part || (note.start == this._cursor.part && note.pitches[0] <= mousePitch)) {
                         insertIndex = i + 1;
@@ -1083,6 +1534,21 @@ export class PatternEditor {
         this._shiftHeld = event.shiftKey;
         this._altHeld = event.altKey;
         this._dragConfirmed = false;
+
+        if (event.button == 2) {
+            this._mouseDown = false;
+            this._mouseDragging = false;
+            this._movingIndependentNote = false;
+            this._independentMoveNote = null;
+            this._updateCursorStatus();
+            this._updatePreview();
+            this._deleteNoteAtCursor();
+            return;
+        }
+
+        // Ignore middle/extra mouse buttons.
+        if (event.button != 0) return;
+
         this._whenCursorPressed();
     }
 
@@ -2034,6 +2500,7 @@ export class PatternEditor {
 
             this._movingIndependentNote = false;
             this._independentMoveNote = null;
+            this._placedNoteThisPress = false;
 
             if (this._independentNotesEnabled() && this._cursor.curNote != null && !this._shiftHeld && !this._altHeld) {
                 const edge = this._getIndependentEdgeMode(this._cursor.curNote);
@@ -2080,15 +2547,30 @@ export class PatternEditor {
                 for (const oldPin of this._cursor.pins) {
                     note.pins.push(makeNotePin(0, oldPin.time, oldPin.size));
                 }
-                sequence.append(new ChangeEnsurePatternExists(this._doc, this._doc.channel, this._doc.bar));
-                const pattern: Pattern | null = this._doc.getCurrentPattern(this._barOffset);
-                if (pattern == null) throw new Error();
-                sequence.append(new ChangeNoteAdded(this._doc, pattern, note, this._cursor.curIndex));
+                const existingPattern: Pattern | null = this._doc.getCurrentPattern(this._barOffset);
+                const canPlace: boolean = existingPattern == null || this._canPlaceIndependentNote(
+                    existingPattern,
+                    null,
+                    note.start,
+                    note.end,
+                    note.pitches,
+                    note.noteType,
+                );
 
-                if (this._doc.prefs.enableNotePreview && !this._doc.synth.playing) {
-                    // Play the new note out loud if enabled.
-                    const duration: number = Math.min(Config.partsPerBeat, this._cursor.end - this._cursor.start);
-                    this._doc.performance.setTemporaryPitches([this._cursor.pitch], duration);
+                if (canPlace) {
+                    sequence.append(new ChangeEnsurePatternExists(this._doc, this._doc.channel, this._doc.bar));
+                    const pattern: Pattern | null = this._doc.getCurrentPattern(this._barOffset);
+                    if (pattern == null) throw new Error();
+
+                    sequence.append(new ChangeNoteAdded(this._doc, pattern, note, this._cursor.curIndex));
+                    this._placedNoteThisPress = true;
+                    this._spawnNotePlacementFx(note);
+
+                    if (this._doc.prefs.enableNotePreview && !this._doc.synth.playing) {
+                        // Play the new note out loud if enabled.
+                        const duration: number = Math.min(Config.partsPerBeat, this._cursor.end - this._cursor.start);
+                        this._doc.performance.setTemporaryPitches([this._cursor.pitch], duration);
+                    }
                 }
             }
             this._updateSelection();
@@ -2158,6 +2640,18 @@ export class PatternEditor {
                 if (pattern != null) {
                     const barEnd: number = this._doc.song.beatsPerBar * Config.partsPerBeat;
                     const noteLength: number = this._independentMoveEnd - this._independentMoveStart;
+
+                    if (
+                        !Number.isFinite(noteLength)
+                        || noteLength < 1
+                        || this._independentMovePitches.length == 0
+                        || this._independentMovePitches.some((pitch: number) => !Number.isFinite(pitch))
+                    ) {
+                        this._movingIndependentNote = false;
+                        this._independentMoveNote = null;
+                        return;
+                    }
+
                     const timeDelta: number = Math.round((this._mouseX - this._mouseXStart) / (this._partWidth * minDivision)) * minDivision;
 
                     let newStart: number = Math.max(0, Math.min(barEnd - noteLength, this._independentMoveStart + timeDelta));
@@ -2174,7 +2668,7 @@ export class PatternEditor {
                     const newPitches: number[] = this._independentMovePitches.map(pitch => pitch + pitchDelta);
 
                     if (!this._independentNoteHasCollision(pattern, this._independentMoveNote, newStart, newEnd, newPitches)) {
-                        sequence.append(new ChangeMoveIndependentNote(this._doc, pattern, this._independentMoveNote, newStart, newEnd, newPitches));
+                        sequence.append(new ChangeMoveIndependentNote(this._doc, this._independentMoveNote, newStart, newEnd, newPitches));
                         this._dragTime = newStart;
                         this._dragPitch = newPitches[0];
                         this._dragSize = this._independentMoveNote.pins[0].size;
@@ -2353,13 +2847,27 @@ export class PatternEditor {
                             this._doc.song.getChannelIsNoise(this._doc.channel));
                         theNote.noteType = this._getNoteEntryType();
                         theNote.continuesLastPattern = continuesLastPattern;
-                        sequence.append(new ChangeNoteAdded(this._doc, pattern, theNote, i));
-                        this._copyPins(theNote);
 
-                        this._dragTime = backwards ? start : end;
-                        this._dragPitch = this._cursor.pitch;
-                        this._dragSize = theNote.pins[backwards ? 0 : 1].size;
-                        this._dragVisible = true;
+                        const canPlace: boolean = this._canPlaceIndependentNote(
+                            pattern,
+                            null,
+                            theNote.start,
+                            theNote.end,
+                            theNote.pitches,
+                            theNote.noteType,
+                        );
+
+                        if (canPlace) {
+                            sequence.append(new ChangeNoteAdded(this._doc, pattern, theNote, i));
+                            this._placedNoteThisPress = true;
+                            this._spawnNotePlacementFx(theNote);
+                            this._copyPins(theNote);
+
+                            this._dragTime = backwards ? start : end;
+                            this._dragPitch = this._cursor.pitch;
+                            this._dragSize = theNote.pins[backwards ? 0 : 1].size;
+                            this._dragVisible = true;
+                        }
                     }
 
                     let prevPattern: Pattern | null = this._pattern;
@@ -2577,16 +3085,16 @@ export class PatternEditor {
                 this._doc.record(this._dragChange);
                 this._dragChange = null;
                 // Need to re-sort the notes by start time as they might change order if user drags them around.
-                if (this._pattern != null && (this._doc.song.getChannelIsMod(this._doc.channel) || this._independentNotesEnabled())) this._pattern.notes.sort(function (a, b) { return (a.start == b.start) ? a.pitches[0] - b.pitches[0] : a.start - b.start; });
+                if (this._pattern != null && (this._doc.song.getChannelIsMod(this._doc.channel) || this._independentNotesEnabled())) this._sortIndependentPattern(this._pattern);
 
             } else if (this._draggingStartOfSelection || this._draggingEndOfSelection || this._shiftHeld) {
                 this._setPatternSelection(this._dragChange);
                 this._dragChange = null;
-            } else if (this._mouseDragging || this._cursor.curNote == null || !this._dragChange.isNoop() || this._draggingStartOfSelection || this._draggingEndOfSelection || this._draggingSelectionContents || this._shiftHeld) {
+            } else if (this._placedNoteThisPress || this._mouseDragging || this._cursor.curNote == null || !this._dragChange.isNoop() || this._draggingStartOfSelection || this._draggingEndOfSelection || this._draggingSelectionContents || this._shiftHeld) {
                 this._doc.record(this._dragChange);
                 this._dragChange = null;
                 // Need to re-sort the notes by start time as they might change order if user drags them around.
-                if (this._pattern != null && (this._doc.song.getChannelIsMod(this._doc.channel) || this._independentNotesEnabled())) this._pattern.notes.sort(function (a, b) { return (a.start == b.start) ? a.pitches[0] - b.pitches[0] : a.start - b.start; });
+                if (this._pattern != null && (this._doc.song.getChannelIsMod(this._doc.channel) || this._independentNotesEnabled())) this._sortIndependentPattern(this._pattern);
 
             } else {
 
@@ -2598,6 +3106,7 @@ export class PatternEditor {
                 if (this._independentNotesEnabled()) {
                     const targetNote: Note = this._cursor.curNote;
                     const targetPitch: number = targetNote.pitches[0];
+                    this._spawnNoteDeletionFx(targetNote);
 
                     for (let i: number = this._pattern.notes.length - 1; i >= 0; i--) {
                         const note: Note = this._pattern.notes[i];
@@ -2616,6 +3125,7 @@ export class PatternEditor {
                         sequence.append(new ChangePitchAdded(this._doc, this._cursor.curNote, this._cursor.curNote.pitches[0], 0, true));
                     }
                     sequence.append(new ChangePitchAdded(this._doc, this._cursor.curNote, this._cursor.pitch, this._cursor.curNote.pitches.length));
+                    this._spawnNotePlacementFx(this._cursor.curNote);
                     this._copyPins(this._cursor.curNote);
 
                     if (this._doc.prefs.enableNotePreview && !this._doc.synth.playing) {
@@ -2623,6 +3133,8 @@ export class PatternEditor {
                         this._doc.performance.setTemporaryPitches(this._cursor.curNote.pitches, duration);
                     }
                 } else {
+                    this._spawnNoteDeletionFx(this._cursor.curNote, this._cursor.pitch);
+
                     if (this._cursor.curNote.pitches.length == 1) {
                         sequence.append(new ChangeNoteAdded(this._doc, this._pattern, this._cursor.curNote, this._cursor.curIndex, true));
                     } else {
@@ -2636,6 +3148,7 @@ export class PatternEditor {
 
         this._mouseDown = false;
         this._mouseDragging = false;
+        this._placedNoteThisPress = false;
         this._movingIndependentNote = false;
         this._independentMoveNote = null;
         this._draggingStartOfSelection = false;
@@ -3021,8 +3534,8 @@ export class PatternEditor {
     }
         this._pattern = nextPattern;
 
-        this._editorWidth = this.container.clientWidth;
-        this._editorHeight = this.container.clientHeight;
+        this._editorWidth = this._pianoRollViewport.clientWidth;
+        this._editorHeight = this._pianoRollViewport.clientHeight;
         this._partWidth = this._editorWidth / (this._doc.song.beatsPerBar * Config.partsPerBeat);
         this._octaveOffset = (this._doc.channel >= this._doc.song.pitchChannelCount) ? 0 : this._doc.song.channels[this._doc.channel].octave * Config.pitchesPerOctave;
 
@@ -3367,12 +3880,13 @@ export class PatternEditor {
                         notePath.setAttribute("class","note-secondary");
                     }
                     
-                    this._drawNote(notePath, pitch, note.start, note.pins, (this._pitchHeight - this._pitchBorder) / 2 + 1, false, this._octaveOffset);
+                    const displayPitch: number = pitch + (note.noteType == NoteType.slide ? 0.18 : 0.0);
+                    this._drawNote(notePath, displayPitch, note.start, note.pins, (this._pitchHeight - this._pitchBorder) / 2 + 1, false, this._octaveOffset);
                     this._svgNoteContainer.appendChild(notePath);
                     notePath = SVG.path();
                     notePath.setAttribute("fill", colorPrimary);
                     notePath.setAttribute("pointer-events", "none");
-                    this._drawNote(notePath, pitch, note.start, note.pins, (this._pitchHeight - this._pitchBorder) / 2 + 1, true, this._octaveOffset);
+                    this._drawNote(notePath, displayPitch, note.start, note.pins, (this._pitchHeight - this._pitchBorder) / 2 + 1, true, this._octaveOffset);
                     this._svgNoteContainer.appendChild(notePath);
                     if (this._doc.song.getChannelIsMod(this._doc.channel)) {
                         notePath.setAttribute("class","mod-note-primary");
@@ -3385,7 +3899,7 @@ export class PatternEditor {
                         const noteFlashColor = ColorConfig.getComputed("--note-flash") !== "" ? "var(--note-flash)" : "#ffffff";
                         notePath.setAttribute("fill", noteFlashColor);
                         notePath.setAttribute("pointer-events", "none");
-                        this._drawNote(notePath, pitch, note.start, note.pins, (this._pitchHeight - this._pitchBorder) / 2 + 1, true, this._octaveOffset);
+                        this._drawNote(notePath, displayPitch, note.start, note.pins, (this._pitchHeight - this._pitchBorder) / 2 + 1, true, this._octaveOffset);
                         this._svgNoteContainer.appendChild(notePath);
                         notePath.classList.add('note-flash');
                         notePath.style.opacity = "0";
@@ -3418,16 +3932,18 @@ export class PatternEditor {
 
                     if (!this._doc.song.getChannelIsNoise(this._doc.channel) && !this._doc.song.getChannelIsMod(this._doc.channel)) {
                         const markerX: number = this._partWidth * note.start + indicatorOffset + 2;
-                        const markerY: number = this._pitchToPixelHeight(pitch - this._octaveOffset);
+                        const markerY: number = this._pitchToPixelHeight(
+                            pitch + (note.noteType == NoteType.slide ? 0.18 : 0.0) - this._octaveOffset,
+                        );
 
                         if (note.noteType == NoteType.slide) {
                             const marker: SVGPathElement = SVG.path();
                             const size: number = Math.max(3, Math.min(6, this._pitchHeight * 0.26));
                             marker.setAttribute(
                                 "d",
-                                "M " + prettyNumber(markerX) + " " + prettyNumber(markerY)
-                                + " L " + prettyNumber(markerX + size) + " " + prettyNumber(markerY - size)
-                                + " L " + prettyNumber(markerX + size) + " " + prettyNumber(markerY + size)
+                                "M " + prettyNumber(markerX) + " " + prettyNumber(markerY - size)
+                                + " L " + prettyNumber(markerX + size) + " " + prettyNumber(markerY)
+                                + " L " + prettyNumber(markerX) + " " + prettyNumber(markerY + size)
                                 + " Z",
                             );
                             marker.setAttribute("fill", ColorConfig.invertedText);
@@ -3498,6 +4014,17 @@ export class PatternEditor {
     }
 
     private _drawNote(svgElement: SVGPathElement, pitch: number, start: number, pins: NotePin[], radius: number, showSize: boolean, offset: number): void {
+        if (
+            this._useRoundedPianoNotes()
+            && !this._doc.song.getChannelIsMod(this._doc.channel)
+            && !this._doc.song.getChannelIsNoise(this._doc.channel)
+            && pins.length >= 2
+            && pins.every((pin: NotePin) => pin.interval == pins[0].interval)
+        ) {
+            this._drawRoundedFlatNote(svgElement, pitch + pins[0].interval, start, pins, radius, showSize, offset);
+            return;
+        }
+
         const totalWidth: number = this._partWidth * (pins[pins.length - 1].time + pins[0].time);
         const endOffset: number = 0.5 * Math.min(2, totalWidth - 1);
 

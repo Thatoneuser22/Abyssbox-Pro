@@ -1189,7 +1189,14 @@ export class Config {
         { name: "interrupt", isSeamless: true, continues: false, slides: false, slideTicks: 3, includeAdjacentPatterns: true },
         { name: "continue", isSeamless: true, continues: true, slides: false, slideTicks: 3, includeAdjacentPatterns: true },
         { name: "slide", isSeamless: true, continues: false, slides: true, slideTicks: 3, includeAdjacentPatterns: true },
-        { name: "slide in pattern", isSeamless: true, continues: false, slides: true, slideTicks: 3, includeAdjacentPatterns: false }
+        { name: "slide in pattern", isSeamless: true, continues: false, slides: true, slideTicks: 3, includeAdjacentPatterns: false },
+        { name: "seamless", isSeamless: true, continues: false, slides: false, slideTicks: 3, includeAdjacentPatterns: true },
+        { name: "sudden", isSeamless: false, continues: false, slides: false, slideTicks: 3, includeAdjacentPatterns: false },
+        { name: "smooth", isSeamless: false, continues: false, slides: false, slideTicks: 3, includeAdjacentPatterns: false },
+        { name: "trill", isSeamless: false, continues: false, slides: false, slideTicks: 3, includeAdjacentPatterns: false },
+        { name: "click", isSeamless: false, continues: false, slides: false, slideTicks: 3, includeAdjacentPatterns: false },
+        { name: "bow", isSeamless: false, continues: false, slides: false, slideTicks: 3, includeAdjacentPatterns: false },
+        { name: "blip", isSeamless: false, continues: false, slides: false, slideTicks: 3, includeAdjacentPatterns: false }
 	]);
 	public static readonly vibratos: DictionaryArray<Vibrato> = toNameMap([
         { name: "none", amplitude: 0.0, type: 0, delayTicks: 0 },
@@ -1246,7 +1253,15 @@ export class Config {
         { name: "resonance", voices: 2, spread: 0.0025, offset: 0.1, expression: 0.8, sign: -1.5 },
 		{ name: "FART", voices: 2, spread: 13, offset: -5, expression: 1.0, sign: -3 },
 		
-	 //for modbox; voices = riffapp, spread = intervals, offset = offsets, expression = volume, and sign = signs
+	 
+        { name: "augmented", voices: 4, spread: 6, offset: 6, expression: 0.5, sign: 1.0 },
+        { name: "diminished", voices: 5, spread: 6, offset: 6, expression: 0.4, sign: 1.0 },
+        { name: "chorus", voices: 9, spread: 0.22, offset: 0, expression: 0.15, sign: 1.0 },
+        { name: "block", voices: 9, spread: 6, offset: 6, expression: 0.15, sign: 0.8 },
+        { name: "extraterrestrial", voices: 6, spread: 15.2, offset: -6, expression: 0.35, sign: 0.7 },
+        { name: "bow", voices: 9, spread: 0.006, offset: 0, expression: 0.15, sign: 0.5 },
+        { name: "double octave", voices: 3, spread: 12, offset: 12, expression: 0.6, sign: 1.0 },
+        //for modbox; voices = riffapp, spread = intervals, offset = offsets, expression = volume, and sign = signs
 	]);
     public static readonly effectNames: ReadonlyArray<string> = ["reverb", "chorus", "panning", "distortion", "bitcrusher", "note filter", "echo", "pitch shift", "detune", "vibrato", "transition type", "chord type", "ring modulation", "phaser", "note range", "invert wave", "granular"];
     public static readonly effectOrder: ReadonlyArray<EffectType> = [EffectType.panning, EffectType.transition, EffectType.chord, EffectType.pitchShift, EffectType.detune, EffectType.vibrato, EffectType.noteFilter, EffectType.distortion, EffectType.bitcrusher, EffectType.chorus, EffectType.echo, EffectType.reverb, EffectType.ringModulation, EffectType.phaser, EffectType.noteRange, EffectType.invertWave, EffectType.granular];
@@ -1564,7 +1579,7 @@ export class Config {
     public static readonly songDetuneMin: number = 0;
     public static readonly songDetuneMax: number = 500;
     public static readonly unisonVoicesMin: number = 1;
-    public static readonly unisonVoicesMax: number = 2;
+    public static readonly unisonVoicesMax: number = 9;
     public static readonly unisonSpreadMin: number = -96;
     public static readonly unisonSpreadMax: number = 96; 
     public static readonly unisonOffsetMin: number = -96;
@@ -1673,7 +1688,7 @@ export class Config {
         { name: "noteVolume",             computeIndex: EnvelopeComputeIndex.noteVolume,                displayName: "note volume",         interleave: false,  isFilter: false,    maxCount: 1,                        effect: null,                       compatibleInstruments: null },
         { name: "pulseWidth",             computeIndex: EnvelopeComputeIndex.pulseWidth,                displayName: "pulse width",         interleave: false,  isFilter: false,    maxCount: 1,                        effect: null,                       compatibleInstruments: [InstrumentType.pwm, InstrumentType.supersaw] },
         { name: "stringSustain",          computeIndex: EnvelopeComputeIndex.stringSustain,             displayName: "sustain",             interleave: false,  isFilter: false,    maxCount: 1,                        effect: null,                       compatibleInstruments: [InstrumentType.pickedString] },
-        { name: "unison",                 computeIndex: EnvelopeComputeIndex.unison,                    displayName: "unison",              interleave: false,  isFilter: false,    maxCount: 1,                        effect: null,                       compatibleInstruments: [InstrumentType.chip, InstrumentType.harmonics, InstrumentType.pickedString, InstrumentType.customChipWave, InstrumentType.pwm, InstrumentType.noise, InstrumentType.spectrum] },
+        { name: "unison",                 computeIndex: EnvelopeComputeIndex.unison,                    displayName: "unison",              interleave: false,  isFilter: false,    maxCount: 1,                        effect: null,                       compatibleInstruments: [InstrumentType.chip, InstrumentType.harmonics, InstrumentType.pickedString, InstrumentType.customChipWave, InstrumentType.pwm, InstrumentType.noise, InstrumentType.spectrum, InstrumentType.soundfont] },
         { name: "operatorFrequency",      computeIndex: EnvelopeComputeIndex.operatorFrequency0,        displayName: "fm# freq",            interleave: true,   isFilter: false,    maxCount: Config.operatorCount+2,   effect: null,                       compatibleInstruments: [InstrumentType.fm, InstrumentType.fm6op] },
         { name: "operatorAmplitude",      computeIndex: EnvelopeComputeIndex.operatorAmplitude0,        displayName: "fm# volume",          interleave: false,  isFilter: false,    maxCount: Config.operatorCount+2,   effect: null,                       compatibleInstruments: [InstrumentType.fm, InstrumentType.fm6op] },
         { name: "feedbackAmplitude",      computeIndex: EnvelopeComputeIndex.feedbackAmplitude,         displayName: "fm feedback",         interleave: false,  isFilter: false,    maxCount: 1,                        effect: null,                       compatibleInstruments: [InstrumentType.fm, InstrumentType.fm6op] },

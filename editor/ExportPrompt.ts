@@ -8,6 +8,7 @@ import { SongDocument } from "./SongDocument";
 import { Prompt } from "./Prompt";
 import { HTML } from "imperative-html/dist/esm/elements-strict";
 import { ArrayBufferWriter } from "./ArrayBufferWriter";
+import { exportFlStudioProject } from "./FlpExporter";
 import { MidiChunkType, MidiFileFormat, MidiControlEventMessage, MidiEventType, MidiMetaEventMessage, MidiRegisteredParameterNumberMSB, MidiRegisteredParameterNumberLSB, volumeMultToMidiVolume, volumeMultToMidiExpression, defaultMidiPitchBend, defaultMidiExpression } from "./Midi";
 
 const { button, div, h2, input, select, option} = HTML;
@@ -60,6 +61,7 @@ export class ExportPrompt implements Prompt {
 	    option({ value: "ogg" }, "Export to .ogg file."),
         option({ value: "opus" }, "Export to .opus file."),
         option({ value: "midi" }, "Export to .mid file."),
+        option({ value: "flp" }, "Export to FL Studio project (.flp)."),
         option({ value: "json" }, "Export to .json file."),
         option({ value: "html" }, "Export to .html file."),
     );
@@ -285,6 +287,10 @@ export class ExportPrompt implements Prompt {
             case "midi":
                 this.outputStarted = true;
                 this._exportToMidi();
+                break;
+            case "flp":
+                this.outputStarted = true;
+                this._exportToFlp();
                 break;
             case "json":
                 this.outputStarted = true;
@@ -1096,6 +1102,19 @@ export class ExportPrompt implements Prompt {
 		this._close();
 	}
 	
+    private _exportToFlp(): void {
+        const arrayBuffer: ArrayBuffer = exportFlStudioProject(this._doc.song, {
+            includeIntro: this._enableIntro.checked,
+            loopCount: Number(this._loopDropDown.value),
+            includeOutro: this._enableOutro.checked,
+            title: this._fileName.value.trim(),
+        });
+
+        const blob: Blob = new Blob([arrayBuffer], { type: "application/octet-stream" });
+        save(blob, this._fileName.value.trim() + ".flp");
+        this._close();
+    }
+
 	private _exportToJson(): void {
 		const jsonObject: Object = this._doc.song.toJsonObject(this._enableIntro.checked, Number(this._loopDropDown.value), this._enableOutro.checked);
         let whiteSpaceParam: string | undefined = this._removeWhitespace.checked ? undefined : '\t';

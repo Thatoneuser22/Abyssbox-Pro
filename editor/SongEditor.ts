@@ -852,6 +852,7 @@ export class SongEditor {
             option({ value: "showFifth" }, 'Highlight "Fifth" Note'),
             option({ value: "advancedColorScheme"}, "Advanced Color Scheme (ModBox)"),
             option({ value: "notesFlashWhenPlayed" }, "Notes Flash When Played (DB2)"),
+            option({ value: "flRoundedPianoNotes" }, "FL-Style Rounded Piano Roll Notes"),
             option({ value: "showChannels" }, "Show All Channels"),
             option({ value: "showScrollBar" }, "Show Octave Scroll Bar"),
             option({ value: "showLetters" }, "Show Piano Keys"),
@@ -3072,6 +3073,7 @@ export class SongEditor {
         // the theme variables are named "icon" to prevent people getting confused and thinking they're svg
         const textOnIcon: string = ColorConfig.getComputed("--text-enabled-icon") !== "" ? ColorConfig.getComputed("--text-enabled-icon") : "✓ ";
         const textOffIcon: string = ColorConfig.getComputed("--text-disabled-icon") !== "" ? ColorConfig.getComputed("--text-disabled-icon") : "　";
+        const roundedPianoNotes: boolean = window.localStorage.getItem("flRoundedPianoNotes") == "true";
         const optionCommands: ReadonlyArray<string> = [ // ctrl+f for: preferences stuff
             "Technical",
             (prefs.autoPlay ? textOnIcon : textOffIcon) + "Auto Play on Load",
@@ -3094,6 +3096,7 @@ export class SongEditor {
             (prefs.showFifth ? textOnIcon : textOffIcon) + 'Highlight "Fifth" Note',
             (prefs.advancedColorScheme ? textOnIcon : textOffIcon) + 'Advanced Color Scheme (ModBox)',
             (prefs.notesFlashWhenPlayed ? textOnIcon : textOffIcon) + "Notes Flash When Played (DB2)",
+            (roundedPianoNotes ? textOnIcon : textOffIcon) + "FL-Style Rounded Piano Roll Notes",
             (prefs.showChannels ? textOnIcon : textOffIcon) + "Show All Channels",
             (prefs.showScrollBar ? textOnIcon : textOffIcon) + "Show Octave Scroll Bar",
             (prefs.showLetters ? textOnIcon : textOffIcon) + "Show Piano Keys",
@@ -3728,7 +3731,7 @@ export class SongEditor {
                     this._granularContainerRow.style.display = "none";
                 }
 
-            if (instrument.type == InstrumentType.chip || instrument.type == InstrumentType.customChipWave || instrument.type == InstrumentType.harmonics || instrument.type == InstrumentType.pickedString || instrument.type == InstrumentType.spectrum || instrument.type == InstrumentType.pwm || instrument.type == InstrumentType.noise) {
+            if (instrument.type == InstrumentType.chip || instrument.type == InstrumentType.customChipWave || instrument.type == InstrumentType.harmonics || instrument.type == InstrumentType.pickedString || instrument.type == InstrumentType.spectrum || instrument.type == InstrumentType.pwm || instrument.type == InstrumentType.noise || instrument.type == InstrumentType.soundfont) {
                 this._unisonSelectRow.style.display = "";
                 setSelectedValue(this._unisonSelect, instrument.unison);
                 this._unisonVoicesInputBox.value = instrument.unisonVoices + "";
@@ -3737,7 +3740,10 @@ export class SongEditor {
                 this._unisonExpressionInputBox.value = instrument.unisonExpression + "";
                 this._unisonSignInputBox.value = instrument.unisonSign + "";
                 this._unisonBuzzesBox.checked = instrument.unisonBuzzes ? true : false;
-                this._unisonBuzzesBoxRow.style.display = (instrument.unison == Config.unisons.length ? "" : "none"); // hide unless custom
+                this._unisonBuzzesBoxRow.style.display =
+                    (instrument.unison == Config.unisons.length && instrument.type != InstrumentType.soundfont)
+                        ? ""
+                        : "none";
                 this._unisonDropdownGroup.style.display = (this._openUnisonDropdown ? "" : "none");
             } else {
                 this._unisonSelectRow.style.display = "none";
@@ -6658,6 +6664,12 @@ export class SongEditor {
                 break;
             case "notesFlashWhenPlayed":
                     this._doc.prefs.notesFlashWhenPlayed = !this._doc.prefs.notesFlashWhenPlayed;
+                break;
+            case "flRoundedPianoNotes":
+                window.localStorage.setItem(
+                    "flRoundedPianoNotes",
+                    window.localStorage.getItem("flRoundedPianoNotes") == "true" ? "false" : "true",
+                );
                 break;
             case "oldModNotes":
                 this._doc.prefs.oldModNotes = !this._doc.prefs.oldModNotes;
