@@ -32,7 +32,17 @@ interface StateMessage {
     channel?: number;
 }
 
-type ClientMessage = HelloMessage | ProfileMessage | StateMessage;
+interface CursorMessage {
+    type: "cursor";
+    clientId: string;
+    x: number;
+    y: number;
+    visible: boolean;
+    channel: number;
+    bar: number;
+}
+
+type ClientMessage = HelloMessage | ProfileMessage | StateMessage | CursorMessage;
 
 const maxSongLength: number = 2_000_000;
 const maxNameLength: number = 24;
@@ -260,6 +270,32 @@ export class Room extends DurableObject<Env> {
             } satisfies ClientAttachment);
 
             this._broadcastPresence();
+            return;
+        }
+
+        if (message.type == "cursor") {
+            const attachment: ClientAttachment = this._getAttachment(socket);
+
+            if (attachment.clientId == "" || attachment.clientId != message.clientId) {
+                return;
+            }
+
+            const x: number = Math.max(0, Math.min(1, Number(message.x) || 0));
+            const y: number = Math.max(0, Math.min(1, Number(message.y) || 0));
+            const channel: number = Math.max(0, Math.min(255, Math.floor(Number(message.channel) || 0)));
+            const bar: number = Math.max(0, Math.min(65_535, Math.floor(Number(message.bar) || 0)));
+
+            this._broadcast({
+                type: "cursor",
+                clientId: attachment.clientId,
+                name: attachment.name,
+                x,
+                y,
+                visible: Boolean(message.visible),
+                channel,
+                bar,
+            }, socket);
+
             return;
         }
 
