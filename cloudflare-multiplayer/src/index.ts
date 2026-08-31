@@ -2,6 +2,7 @@ import { DurableObject } from "cloudflare:workers";
 
 interface Env {
     ROOMS: DurableObjectNamespace<Room>;
+    ASSETS: R2Bucket;
     ALLOWED_ORIGINS?: string;
 }
 
@@ -46,6 +47,8 @@ type ClientMessage = HelloMessage | ProfileMessage | StateMessage | CursorMessag
 
 const maxSongLength: number = 2_000_000;
 const maxNameLength: number = 24;
+const maxSoundFontBytes: number = 64 * 1024 * 1024;
+const soundFontPathRegex: RegExp = /^\/assets\/soundfont\/([a-f0-9]{64})\.sf2$/i;
 
 function json(data: unknown, status: number = 200): Response {
     return new Response(JSON.stringify(data), {
@@ -81,6 +84,165 @@ function originAllowed(request: Request, env: Env): boolean {
     return allowed.includes(origin);
 }
 
+function corsHeaders(request: Request, env: Env): Headers {
+    const headers: Headers = new Headers();
+    const origin: string = request.headers.get("Origin") || "";
+
+    if (origin != "" && originAllowed(request, env)) {
+        headers.set("access-control-allow-origin", origin);
+        headers.set("vary", "Origin");
+    }
+
+    headers.set("access-control-allow-methods", "GET, HEAD, PUT, OPTIONS");
+    headers.set("access-control-allow-headers", "content-type");
+    headers.set("access-control-max-age", "86400");
+    return headers;
+}
+
+function assetJson(request: Request, env: Env, data: unknown, status: number = 200): Response {
+    const headers: Headers = corsHeaders(request, env);
+    headers.set("content-type", "application/json; charset=utf-8");
+    headers.set("cache-control", "no-store");
+
+    return new Response(JSON.stringify(data), {
+        status,
+        headers,
+    });
+}
+
+function isValidSoundFont(buffer: ArrayBuffer): boolean {
+    if (buffer.byteLength < 12) return false;
+
+    const bytes: Uint8Array = new Uint8Array(buffer, 0, 12);
+
+    return (
+        bytes[0] == 0x52 &&
+        bytes[1] == 0x49 &&
+        bytes[2] == 0x46 &&
+        bytes[3] == 0x46 &&
+        bytes[8] == 0x73 &&
+        bytes[9] == 0x66 &&
+        bytes[10] == 0x62 &&
+        bytes[11] == 0x6b
+    );
+}
+
+async function roomHasClient(env: Env, roomValue: string, clientId: string): Promise<boolean> {
+    const room: string = cleanRoom(roomValue);
+    if (room.length < 3 || clientId == "") return false;
+
+    const id: DurableObjectId = env.ROOMS.idFromName(room);
+    const stub: DurableObjectStub<Room> = env.ROOMS.get(id);
+
+    const response: Response = await stub.fetch(
+        new Request("https://internal/authorize-asset-upload", {
+            method: "POST",
+            headers: {
+                "X-AbyssBox-Asset-Client": clientId.slice(0, 100),
+            },
+        }),
+    );
+
+    return response.ok;
+}
+
+async function handleSoundFontAsset(
+    request: Request,
+    env: Env,
+    url: URL,
+    hash: string,
+): Promise<Response> {
+    const objectKey: string = "soundfonts/" + hash.toLowerCase() + ".sf2";
+
+    if (request.method == "OPTIONS") {
+        return new Response(null, {
+            status: 204,
+            headers: corsHeaders(request, env),
+        });
+    }
+
+    if (request.method == "GET" || request.method == "HEAD") {
+        const object: R2ObjectBody | null = await env.ASSETS.get(objectKey);
+
+        if (object == null) {
+            return assetJson(request, env, {error: "SoundFont not found."}, 404);
+        }
+
+        const headers: Headers = corsHeaders(request, env);
+        headers.set("content-type", "application/octet-stream");
+        headers.set("content-length", object.size.toString());
+        headers.set("cache-control", "public, max-age=31536000, immutable");
+        headers.set("etag", object.httpEtag);
+
+        if (request.method == "HEAD") {
+            return new Response(null, {
+                status: 200,
+                headers,
+            });
+        }
+
+        return new Response(object.body, {
+            status: 200,
+            headers,
+        });
+    }
+
+    if (request.method != "PUT") {
+        return assetJson(request, env, {error: "Method not allowed."}, 405);
+    }
+
+    const room: string = cleanRoom(url.searchParams.get("room") || "");
+    const clientId: string = (url.searchParams.get("client") || "").slice(0, 100);
+
+    if (!(await roomHasClient(env, room, clientId))) {
+        return assetJson(request, env, {error: "Join the multiplayer room before sharing assets."}, 403);
+    }
+
+    const existing: R2Object | null = await env.ASSETS.head(objectKey);
+
+    if (existing != null) {
+        return assetJson(request, env, {
+            ok: true,
+            existed: true,
+            url: new URL("/assets/soundfont/" + hash.toLowerCase() + ".sf2", request.url).toString(),
+        });
+    }
+
+    const contentLength: number = Number(request.headers.get("content-length") || "0");
+
+    if (Number.isFinite(contentLength) && contentLength > maxSoundFontBytes) {
+        return assetJson(request, env, {error: "SoundFont is larger than the 64 MB multiplayer limit."}, 413);
+    }
+
+    const buffer: ArrayBuffer = await request.arrayBuffer();
+
+    if (buffer.byteLength <= 0 || buffer.byteLength > maxSoundFontBytes) {
+        return assetJson(request, env, {error: "SoundFont is empty or larger than the 64 MB multiplayer limit."}, 413);
+    }
+
+    if (!isValidSoundFont(buffer)) {
+        return assetJson(request, env, {error: "That upload is not a valid SF2 SoundFont."}, 400);
+    }
+
+    const name: string = (url.searchParams.get("name") || "SoundFont").slice(0, 160);
+
+    await env.ASSETS.put(objectKey, buffer, {
+        httpMetadata: {
+            contentType: "application/octet-stream",
+            cacheControl: "public, max-age=31536000, immutable",
+        },
+        customMetadata: {
+            name,
+        },
+    });
+
+    return assetJson(request, env, {
+        ok: true,
+        existed: false,
+        url: new URL("/assets/soundfont/" + hash.toLowerCase() + ".sf2", request.url).toString(),
+    });
+}
+
 export default {
     async fetch(request: Request, env: Env): Promise<Response> {
         const url: URL = new URL(request.url);
@@ -89,7 +251,18 @@ export default {
             return json({
                 ok: true,
                 service: "AbyssBox Pro Multiplayer",
+                soundFontSharing: true,
             });
+        }
+
+        const soundFontMatch: RegExpMatchArray | null = url.pathname.match(soundFontPathRegex);
+
+        if (soundFontMatch != null) {
+            if (!originAllowed(request, env)) {
+                return assetJson(request, env, {error: "Origin not allowed."}, 403);
+            }
+
+            return handleSoundFontAsset(request, env, url, soundFontMatch[1]);
         }
 
         if (!originAllowed(request, env)) {
@@ -180,6 +353,22 @@ export class Room extends DurableObject<Env> {
     }
 
     async fetch(request: Request): Promise<Response> {
+        const url: URL = new URL(request.url);
+
+        if (url.pathname == "/authorize-asset-upload" && request.method == "POST") {
+            const clientId: string = (request.headers.get("X-AbyssBox-Asset-Client") || "").slice(0, 100);
+
+            for (const socket of this.ctx.getWebSockets()) {
+                const attachment: ClientAttachment = this._getAttachment(socket);
+
+                if (attachment.clientId != "" && attachment.clientId == clientId) {
+                    return json({ok: true});
+                }
+            }
+
+            return json({error: "Client is not connected to this room."}, 403);
+        }
+
         if (request.headers.get("Upgrade")?.toLowerCase() != "websocket") {
             return json({ error: "WebSocket upgrade required." }, 426);
         }

@@ -1,36 +1,31 @@
 {
-	"$schema": "./node_modules/wrangler/config-schema.json",
-	"name": "abyssbox-pro-multiplayer",
-	"main": "src/index.ts",
-	"compatibility_date": "2026-08-31",
-	"durable_objects": {
-		"bindings": [
-			{
-				"name": "ROOMS",
-				"class_name": "Room"
-			}
-		]
-	},
-	"migrations": [
-		{
-			"tag": "v1",
-			"new_sqlite_classes": [
-				"Room"
-			]
-		}
-	],
-	"vars": {
-		"ALLOWED_ORIGINS": "https://thatoneuser22.github.io,http://localhost:8000,http://127.0.0.1:8000"
-	},
-	"r2_buckets": [
-		{
-			"binding": "ASSETS",
-			"bucket_name": "abyssbox-pro-multiplayer-assets"
-		},
-		{
-			"bucket_name": "abyssbox-pro-multiplayer-assets",
-			"binding": "abyssbox_pro_multiplayer_assets",
-			"remote": true
-		}
-	]
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "abyssbox-pro-multiplayer",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-31",
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "ROOMS",
+        "class_name": "Room"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": [
+        "Room"
+      ]
+    }
+  ],
+  "vars": {
+    "ALLOWED_ORIGINS": "https://thatoneuser22.github.io,http://localhost:8000,http://127.0.0.1:8000"
+  },
+  "r2_buckets": [
+    {
+      "binding": "ASSETS",
+      "bucket_name": "abyssbox-pro-multiplayer-assets"
+    }
+  ]
 }

@@ -1192,21 +1192,19 @@ export class MultiplayerClient {
         }
     }
 
-    private async _sendHello(): Promise<void> {
+    private _sendHello(): void {
         if (!this._connected) return;
 
         const localSong: string = this._doc.song.toBase64String();
-        const sharedSong: string = await this._makeSharedSongSnapshot();
-
-        if (!this._connected) return;
-
         this._lastSong = localSong;
 
+        // The Worker needs to know this socket's client id before it can
+        // authorize R2 asset uploads. Send the plain room hello first.
         this._send({
             type: "hello",
             clientId: this._clientId,
             name: this._name,
-            song: sharedSong,
+            song: localSong,
         });
     }
 
@@ -1274,6 +1272,12 @@ export class MultiplayerClient {
             this._leaveButton.disabled = false;
             setRoomInUrl(message.room);
             this._sendCursorState(true);
+
+            // The socket has now been identified by the room Durable Object,
+            // so local SF2 files can finally be uploaded/authorized in R2.
+            // Force a shared snapshot even if the musical song itself has not
+            // changed since hello.
+            void this._sendCurrentState(true);
             return;
         }
 
@@ -1354,7 +1358,7 @@ export class MultiplayerClient {
 
             this._connected = true;
             this._lastSong = "";
-            void this._sendHello();
+            this._sendHello();
         });
 
         socket.addEventListener("message", (event: MessageEvent) => {
