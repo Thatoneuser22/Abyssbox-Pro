@@ -246,7 +246,7 @@ export class PatternEditor {
     );
 
     public readonly container: HTMLDivElement = HTML.div(
-        { style: "height: 100%; min-height: 0; overflow: hidden; display: flex; flex-direction: column; flex-grow: 1;" },
+        { style: "position: relative; height: 100%; min-height: 0; overflow: hidden; display: flex; flex-direction: column; flex-grow: 1;" },
         this._pianoRollToolbar,
         this._pianoRollViewport,
     );
@@ -362,6 +362,16 @@ export class PatternEditor {
         this._mobileEditModeButton.style.display = this._interactive && this._hasTouchInput ? "" : "none";
         this._snapControl.style.display = this._interactive ? "flex" : "none";
         this._noteTypeControl.style.display = this._interactive ? "flex" : "none";
+
+        if (this._interactive && this._hasTouchInput) {
+            // Keep the toolbar out of the mobile grid sizing.
+            this._pianoRollToolbar.style.position = "absolute";
+            this._pianoRollToolbar.style.top = "0";
+            this._pianoRollToolbar.style.left = "0";
+            this._pianoRollToolbar.style.right = "0";
+            this._pianoRollToolbar.style.zIndex = "5";
+            this._pianoRollToolbar.style.background = "rgba(0, 0, 0, 0.72)";
+        }
 
         const smoothControls: HTMLElement[] = [
             this._independentNotesControl,
@@ -588,7 +598,7 @@ export class PatternEditor {
 
         const channelColor = ColorConfig.getChannelColor(this._doc.song, this._doc.channel);
         const fillColor: string = channelColor.primaryNote;
-        const outlineColor: string = fillColor;
+        const outlineColor: string = channelColor.secondaryNote;
         const slideOffset: number = note.noteType == NoteType.slide ? 0.18 : 0.0;
 
         for (const pitch of note.pitches) {
@@ -603,7 +613,7 @@ export class PatternEditor {
             ghost.setAttribute("fill-opacity", "0.42");
             ghost.setAttribute("stroke", outlineColor);
             ghost.setAttribute("stroke-width", "1.2");
-            ghost.setAttribute("stroke-opacity", "0.72");
+            ghost.setAttribute("stroke-opacity", "0.95");
             ghost.setAttribute("stroke-linejoin", "round");
             ghost.setAttribute("stroke-linecap", "round");
             ghost.setAttribute("pointer-events", "none");
@@ -622,7 +632,7 @@ export class PatternEditor {
             outline.setAttribute("fill", "none");
             outline.setAttribute("stroke", outlineColor);
             outline.setAttribute("stroke-width", "2");
-            outline.setAttribute("stroke-opacity", "0.78");
+            outline.setAttribute("stroke-opacity", "0.92");
             outline.setAttribute("stroke-linejoin", "round");
             outline.setAttribute("stroke-linecap", "round");
             outline.setAttribute("pointer-events", "none");

@@ -67,49 +67,7 @@ const { button, div, input, select, span, optgroup, option, canvas} = HTML;
 
 const beepboxEditorContainer: HTMLElement = document.getElementById("beepboxEditorContainer")!;
 
-const fixedSettingsWidthStyle: HTMLStyleElement = document.head.appendChild(document.createElement("style"));
-fixedSettingsWidthStyle.textContent = `
-@media (min-width: 711px) {
-    .beepboxEditor {
-        grid-template-columns: minmax(0, 1fr) var(--settings-area-width) !important;
-    }
 
-    .beepboxEditor .settings-area {
-        width: var(--settings-area-width) !important;
-        min-width: 0 !important;
-        max-width: var(--settings-area-width) !important;
-    }
-
-    .beepboxEditor .instrument-settings-area,
-    .beepboxEditor .song-settings-area,
-    .beepboxEditor .editor-controls,
-    .beepboxEditor .selectRow,
-    .beepboxEditor .instrument-bar,
-    .beepboxEditor .selectContainer {
-        min-width: 0 !important;
-        max-width: 100% !important;
-    }
-
-    .beepboxEditor .selectRow > *,
-    .beepboxEditor .instrument-bar > * {
-        min-width: 0 !important;
-    }
-
-    .beepboxEditor select,
-    .beepboxEditor button,
-    .beepboxEditor input {
-        max-width: 100%;
-    }
-
-    #instrumentSettingsText {
-        min-width: 0 !important;
-        max-width: 100% !important;
-        overflow: hidden !important;
-        text-overflow: ellipsis !important;
-        white-space: nowrap !important;
-    }
-}
-`;
 
 function buildOptions(menu: HTMLSelectElement, items: ReadonlyArray<string | number>): HTMLSelectElement {
     for (let index: number = 0; index < items.length; index++) {
@@ -2787,7 +2745,7 @@ export class SongEditor {
 
             .play-pause-area2 {
                 height: unset !important;
-                width: 100% !important
+                width: 100% !important;
                 bottom: 16vh !important;
                 right: unset !important;
                 left: 0 !important;
@@ -3449,12 +3407,8 @@ export class SongEditor {
                 }
             } else {
                 this._drumsetGroup.style.display = "none";
-                if (instrument.type == InstrumentType.soundfont) {
-                    this._fadeInOutRow.style.display = "none";
-                } else {
-                    this._fadeInOutRow.style.display = "";
-                    this._fadeInOutEditor.render();
-                }
+                this._fadeInOutRow.style.display = "";
+                this._fadeInOutEditor.render();
             }
 
             if (instrument.type == InstrumentType.chip) {
@@ -3737,7 +3691,6 @@ export class SongEditor {
             }
 
             if (instrument.type == InstrumentType.soundfont) {
-                this._fadeInOutRow.style.display = "none";
                 this._envelopeDiv.style.display = "none";
             }
 
