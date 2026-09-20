@@ -2300,7 +2300,7 @@ export class Instrument {
             instrumentObject["lowerNoteLimit"] = this.lowerNoteLimit;
         }
 
-        if (this.type != InstrumentType.drumset && this.type != InstrumentType.soundfont) {
+        if (this.type != InstrumentType.drumset) {
             instrumentObject["fadeInSeconds"] = Math.round(10000 * Synth.fadeInSettingToSeconds(this.fadeIn)) / 10000;
             instrumentObject["fadeOutTicks"] = Synth.fadeOutSettingToTicks(this.fadeOut);
         }
@@ -10387,7 +10387,6 @@ export class Synth {
 
     public pause(): void {
         if (!this.isPlayingSong) return;
-        this.stopAllSfxTones();
         this.isPlayingSong = false;
         this.isRecording = false;
         this.modValues = [];
@@ -10418,39 +10417,6 @@ export class Synth {
                 for (const instrumentState of channelState.instruments) {
                     instrumentState.resetAllEffects();
                 }
-            }
-        }
-    }
-
-    private stopAllSfxTones(): void {
-        if (this.song == null) return;
-
-        for (let channelIndex: number = 0; channelIndex < this.song.getChannelCount(); channelIndex++) {
-            const channel: Channel = this.song.channels[channelIndex];
-            const channelState: ChannelState | undefined = this.channels[channelIndex];
-            if (channelState == undefined) continue;
-
-            for (let instrumentIndex: number = 0; instrumentIndex < channel.instruments.length; instrumentIndex++) {
-                const instrument: Instrument = channel.instruments[instrumentIndex];
-                if (instrument.type != InstrumentType.sfx) continue;
-
-                const instrumentState: InstrumentState | undefined = channelState.instruments[instrumentIndex];
-                if (instrumentState == undefined) continue;
-
-                while (instrumentState.activeTones.count() > 0) {
-                    this.freeTone(instrumentState.activeTones.popBack());
-                }
-                while (instrumentState.activeModTones.count() > 0) {
-                    this.freeTone(instrumentState.activeModTones.popBack());
-                }
-                while (instrumentState.releasedTones.count() > 0) {
-                    this.freeTone(instrumentState.releasedTones.popBack());
-                }
-                while (instrumentState.liveInputTones.count() > 0) {
-                    this.freeTone(instrumentState.liveInputTones.popBack());
-                }
-
-                instrumentState.resetAllEffects();
             }
         }
     }
@@ -10599,7 +10565,6 @@ export class Synth {
             const oldBar: number = this.bar;
             this.bar = this.song.loopStart;
             this.playheadInternal += this.bar - oldBar;
-            this.stopAllSfxTones();
 
             if (this.playing)
                 this.computeLatestModValues();
@@ -10613,7 +10578,6 @@ export class Synth {
         this.bar++;
         if (this.bar >= this.song.barCount) {
             this.bar = 0;
-            this.stopAllSfxTones();
         }
         this.playheadInternal += this.bar - oldBar;
 
@@ -10630,7 +10594,6 @@ export class Synth {
             this.bar = this.song.barCount - 1;
         }
         this.playheadInternal += this.bar - oldBar;
-        this.stopAllSfxTones();
 
         if (this.playing)
             this.computeLatestModValues();
@@ -10690,10 +10653,6 @@ export class Synth {
             this.bar = this.song.loopStart;
             if (this.loopBarStart != -1) this.bar = this.loopBarStart;
             if (this.loopRepeatCount > 0) this.loopRepeatCount--;
-        }
-
-        if (this.prevBar != null && this.bar <= this.prevBar) {
-            this.stopAllSfxTones();
         }
 
     }
@@ -10764,15 +10723,10 @@ export class Synth {
 
                 this.prevBar = this.bar;
                 this.bar = this.getNextBar();
-
-                if (this.bar <= this.prevBar) {
-                    this.stopAllSfxTones();
-                    if (this.loopRepeatCount > 0) this.loopRepeatCount--;
-                }
+                if (this.bar <= this.prevBar && this.loopRepeatCount > 0) this.loopRepeatCount--;
 
             }
             if (this.bar >= song.barCount) {
-                this.stopAllSfxTones();
                 this.bar = 0;
                 if (this.loopRepeatCount != -1) {
                     ended = true;
@@ -11155,14 +11109,9 @@ export class Synth {
                                 } else {
                                     this.prevBar = this.bar;
                                     this.bar = this.getNextBar();
-
-                                    if (this.bar <= this.prevBar) {
-                                        this.stopAllSfxTones();
-                                        if (this.loopRepeatCount > 0) this.loopRepeatCount--;
-                                    }
+                                    if (this.bar <= this.prevBar && this.loopRepeatCount > 0) this.loopRepeatCount--;
 
                                     if (this.bar >= song.barCount) {
-                                        this.stopAllSfxTones();
                                         this.bar = 0;
                                         if (this.loopRepeatCount != -1) {
                                             ended = true;
