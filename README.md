@@ -1,20 +1,19 @@
-# AbyssBox
+# UserBox
 
-[AbyssBox's Main release](https://choptop84.github.io/abyssbox-app/)
-[AbyssBox's Testing sit](https://choptop84.github.io/abyssbox-source/website/)
+[UserBox's Main release](https://thatoneuser22.github.io/Userbox/)
 
-AbyssBox is an online tool for sketching and sharing instrumental music.
-This mod is a modification of Ultrabox, which is a modification of Goldbox, which itself is a modification of JummBox, which inturn is a modification of the [original BeepBox](https://beepbox.co).
 
-The goal of AbyssBox is not quite as simple as Ultrabox's...
-What I want to do is get better at coding, so what I'm doing is this! My very own simple little project!
+UserBox is an online tool for sketching and sharing instrumental music.
+This mod is a modification of Abyssbox, which is a modification of Ultrabox, which itself is a modification of GoldBox, which is a modification of JummBox, which inturn is a modification of the [original BeepBox](https://beepbox.co).
+
+I made UserBox because I was bored, and me and my friend wanted Abyssbox to have some extra features it didn’t already have, so I decided to make UserBox.
 
 All song data is packaged into the URL at the top of your browser. When you make
 changes to the song, the URL is updated to reflect your changes. When you are
 satisfied with your song, just copy and paste the URL to save and share your
 song!
 
-AbyssBox, UltraBox, as well as GoldBox, Jummbox, and Beepbox which it's based on, are free projects. If you ever feel so inclined, please support the original creator, [John Nesky](http://www.johnnesky.com/), via
+UserBox, AbyssBox, UltraBox, as well as GoldBox, Jummbox, and Beepbox which it's based on, are free projects. If you ever feel so inclined, please support the original creator, [John Nesky](http://www.johnnesky.com/), via
 [PayPal](https://www.paypal.com/cgi-bin/webscr?cmd=_donations&business=QZJTX9GRYEV9N&currency_code=USD)!
 JummBox is developed by [Jummbus](http://www.twitter.com/jummbus).
 
