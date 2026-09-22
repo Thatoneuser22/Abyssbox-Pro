@@ -977,16 +977,16 @@ export class SongEditor {
         span({ class: "tip", tabindex: "0", style: "height:1em; font-size: smaller;", onclick: () => this._openPrompt("pan") }, "Pan: "),
         div({ style: "color: " + ColorConfig.secondaryText + "; margin-top: -3px;" }, this._panSliderInputBox),
     ), this._panDropdown, this._panSlider.container);
-    private readonly _voiceModeSelect: HTMLSelectElement = buildOptions(select(), ["Poly", "Mono", "Legato"]);
+    private readonly _voiceModeSelect: HTMLSelectElement = buildOptions(select({ title: "Poly plays overlapping notes. Mono plays one note at a time. Legato keeps the voice connected when notes touch or overlap; use Portamento to glide between pitches." }), ["Poly", "Mono", "Legato"]);
     private readonly _voiceModeRow: HTMLDivElement = div(
         { class: "selectRow" },
         span({ class: "tip" }, "Voice:"),
         div({ class: "selectContainer" }, this._voiceModeSelect),
     );
 
-    private readonly _portamentoBox: HTMLInputElement = input({ type: "checkbox", style: "width: 1em; padding: 0; margin: 0 0.5em;" });
+    private readonly _portamentoBox: HTMLInputElement = input({ type: "checkbox", title: "Glide between notes. Enable this with Mono or Legato for a more obvious pitch transition.", style: "width: 1em; padding: 0; margin: 0;" });
     private readonly _portamentoRow: HTMLDivElement = div(
-        { class: "selectRow" },
+        { class: "selectRow portamentoRow" },
         span({ class: "tip" }, "Portamento:"),
         this._portamentoBox,
     );
@@ -1013,28 +1013,6 @@ export class SongEditor {
         this._portamentoRow,
         this._portamentoTimeRow,
         this._portamentoModeRow,
-    );
-
-    private readonly _ottBox: HTMLInputElement = input({ type: "checkbox", style: "width: 1em; padding: 0; margin: 0 0.5em;" });
-    private readonly _ottRow: HTMLDivElement = div(
-        { class: "selectRow" },
-        span({ class: "tip", title: "Multiband upward/downward compression." }, "OTT:"),
-        this._ottBox,
-    );
-
-    private readonly _ottAmountSlider: HTMLInputElement = input({ type: "range", min: "1", max: "63", value: "32", step: "1", style: "margin: 0; flex: 1;" });
-    private readonly _ottAmountValue: HTMLSpanElement = span({ style: `font-size: 80%; color: ${ColorConfig.secondaryText}; width: 3.5em; text-align: right;` }, "51%");
-    private readonly _ottAmountRow: HTMLDivElement = div(
-        { class: "selectRow" },
-        span({ class: "tip" }, "Amount:"),
-        this._ottAmountSlider,
-        this._ottAmountValue,
-    );
-
-    private readonly _ottSettingsGroup: HTMLDivElement = div(
-        { class: "editor-controls" },
-        this._ottRow,
-        this._ottAmountRow,
     );
 
     private readonly _panDelaySlider: Slider = new Slider(input({ style: "margin: 0;", type: "range", min: "0", max: Config.modulators.dictionary["pan delay"].maxRawVol, value: "0", step: "1" }), this._doc, (oldValue: number, newValue: number) => new ChangePanDelay(this._doc, oldValue, newValue), false);
@@ -1304,7 +1282,6 @@ export class SongEditor {
         this._panSliderRow,
         this._panDropdownGroup,
         this._voiceSettingsGroup,
-        this._ottSettingsGroup,
         this._chipWaveSelectRow,
         this._chipNoiseSelectRow,
 	    this._useChipWaveAdvancedLoopControlsRow,
@@ -1690,6 +1667,7 @@ export class SongEditor {
             this._globalOscscopeContainer,
         ),
         this._menuArea,
+        this._patternEditor.pianoRollControls,
         this._songSettingsArea,
         this._instrumentSettingsArea,
     );
@@ -1935,8 +1913,6 @@ export class SongEditor {
         this._portamentoBox.addEventListener("input", this._whenSetPortamento);
         this._portamentoTimeSlider.addEventListener("input", this._whenSetPortamentoTime);
         this._portamentoModeSelect.addEventListener("change", this._whenSetPortamentoMode);
-        this._ottBox.addEventListener("input", this._whenSetOtt);
-        this._ottAmountSlider.addEventListener("input", this._whenSetOttAmount);
 
         //this._pitchedPresetSelect.addEventListener("change", this._whenSetPitchedPreset);
         //this._drumPresetSelect.addEventListener("change", this._whenSetDrumPreset);
@@ -3126,7 +3102,7 @@ export class SongEditor {
         // the theme variables are named "icon" to prevent people getting confused and thinking they're svg
         const textOnIcon: string = ColorConfig.getComputed("--text-enabled-icon") !== "" ? ColorConfig.getComputed("--text-enabled-icon") : "✓ ";
         const textOffIcon: string = ColorConfig.getComputed("--text-disabled-icon") !== "" ? ColorConfig.getComputed("--text-disabled-icon") : "　";
-        const roundedPianoNotes: boolean = window.localStorage.getItem("flRoundedPianoNotes") == "true";
+        const roundedPianoNotes: boolean = window.localStorage.getItem("flRoundedPianoNotes") != "false";
         const optionCommands: ReadonlyArray<string> = [ // ctrl+f for: preferences stuff
             "Technical",
             (prefs.autoPlay ? textOnIcon : textOffIcon) + "Auto Play on Load",
@@ -3867,11 +3843,6 @@ export class SongEditor {
             this._portamentoTimeRow.style.display = showVoiceSettings && instrument.portamento ? "" : "none";
             this._portamentoModeRow.style.display = showVoiceSettings && instrument.portamento ? "" : "none";
 
-            this._ottBox.checked = instrument.ottAmount > 0;
-            if (instrument.ottAmount > 0) this._ottAmountSlider.value = "" + instrument.ottAmount;
-            this._ottAmountValue.textContent = Math.round(instrument.ottAmount * 100 / 63) + "%";
-            this._ottSettingsGroup.style.display = showVoiceSettings ? "" : "none";
-            this._ottAmountRow.style.display = showVoiceSettings && instrument.ottAmount > 0 ? "" : "none";
             this._vibratoDepthSlider.updateValue(Math.round(instrument.vibratoDepth * 25));
             this._vibratoDelaySlider.updateValue(Math.round(instrument.vibratoDelay));
             this._vibratoSpeedSlider.updateValue(instrument.vibratoSpeed);
@@ -6492,29 +6463,6 @@ export class SongEditor {
         this._doc.notifier.changed();
     }
 
-    private _whenSetOtt = (): void => {
-        const instrument: Instrument = this._doc.song.channels[this._doc.channel].instruments[this._doc.getCurrentInstrument()];
-
-        if (this._ottBox.checked) {
-            instrument.ottAmount = Math.max(1, parseInt(this._ottAmountSlider.value) || 32);
-            this._ottAmountSlider.value = "" + instrument.ottAmount;
-        } else {
-            instrument.ottAmount = 0;
-        }
-
-        this._ottAmountRow.style.display = instrument.ottAmount > 0 ? "" : "none";
-        this._ottAmountValue.textContent = Math.round(instrument.ottAmount * 100 / 63) + "%";
-        this._doc.notifier.changed();
-    }
-
-    private _whenSetOttAmount = (): void => {
-        const instrument: Instrument = this._doc.song.channels[this._doc.channel].instruments[this._doc.getCurrentInstrument()];
-        instrument.ottAmount = Math.max(1, Math.min(63, parseInt(this._ottAmountSlider.value) || 1));
-        this._ottBox.checked = true;
-        this._ottAmountValue.textContent = Math.round(instrument.ottAmount * 100 / 63) + "%";
-        this._doc.notifier.changed();
-    }
-
     private _whenSetTransition = (): void => {
         this._doc.record(new ChangeTransition(this._doc, this._transitionSelect.selectedIndex));
     }
@@ -6828,7 +6776,7 @@ export class SongEditor {
             case "flRoundedPianoNotes":
                 window.localStorage.setItem(
                     "flRoundedPianoNotes",
-                    window.localStorage.getItem("flRoundedPianoNotes") == "true" ? "false" : "true",
+                    window.localStorage.getItem("flRoundedPianoNotes") != "false" ? "false" : "true",
                 );
                 break;
             case "oldModNotes":

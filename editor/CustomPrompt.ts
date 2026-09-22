@@ -183,6 +183,7 @@ export class CustomPrompt implements Prompt {
 
 	public readonly _fullThemeSelect: HTMLSelectElement = select({ style: "width: 100%;", id:"themeSelect" },
 	option({ selected: true, disabled: true, hidden: false }, "Pick a Base Theme"),
+	option({ value: "UserBox"}, "UserBox"),
 	option({ value: "AbyssBox Classic"}, "AbyssBox Classic"),
 	option({ value: "AbyssBox Competitive"}, "AbyssBox Competitive"),
 	option({ value: "AbyssBox Light"}, "AbyssBox Light"),
@@ -302,6 +303,7 @@ export class CustomPrompt implements Prompt {
 
 	public readonly _baseColorSelect: HTMLSelectElement = select({ style: "width: 100%; display:none; margin: 0.5em 0;", id:"baseColorSelect" },
 		option({ selected: true, disabled: true, hidden: false }, "Pick a Base Color Palette"),
+		option({ value: "UserBox"}, "UserBox"),
 		option({ value: "AbyssBox Classic"}, "AbyssBox Classic"),
 		option({ value: "AbyssBox Competitive"}, "AbyssBox Competitive"),
 		option({ value: "AbyssBox Light"}, "AbyssBox Light"),

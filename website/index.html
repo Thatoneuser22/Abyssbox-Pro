@@ -2,6 +2,18 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+    <script>
+        // Keep old shared song URLs working after the move to UserBox.
+        if (location.hostname.toLowerCase() === "thatoneuser22.github.io") {
+            const oldSite = /^\/Abyssbox-Pro(?=\/|$)/i;
+            if (oldSite.test(location.pathname)) {
+                const destination = new URL(location.href);
+                destination.pathname = location.pathname.replace(oldSite, "/UserBox");
+                if (destination.pathname === "/UserBox") destination.pathname += "/";
+                location.replace(destination.href);
+            }
+        }
+    </script>
     <link rel='shortcut icon' type='image/x-icon' href='./favicon.ico' />
     <!-- CDN for jQuery and select2 -->
     <script src="https://code.jquery.com/jquery-3.4.1.min.js"
@@ -15,20 +27,20 @@
     <script src="https://cdn.jsdelivr.net/gh/mmig/opus-encdec@e33ca40/dist/libopus-encoder.js"></script>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>AbyssBox Pro 0.13</title>
-    <meta name="application-name" roperty="AbyssBox Pro" />
-    <meta name="apple-mobile-web-app-title" content="AbyssBox Pro">
-    <meta name="description" content="Hey, this is a modification so I can give AbyssBox my own spin on it, I hope you guys enjoy it!" />
+    <title>UserBox 0.13</title>
+    <meta name="application-name" content="UserBox" />
+    <meta name="apple-mobile-web-app-title" content="UserBox">
+    <meta name="description" content="UserBox is a tool for sketching and sharing instrumental music." />
     <meta name="keywords" content="chiptune, instrumental, music, song, melody, composition, tool, free, online, square wave, NES, NSF, abyssbox, ultrabox, beepbox, jummbox, pandorasbox, modbox, sandbox, goldbox, wackybox, todbox" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-    <meta name="theme-color" content="#bf2c5d" />
+    <meta name="theme-color" content="#1b1027" />
     <meta name="msapplication-TileColor" content="#dba600" />
     <meta name="msapplication-config" content="./browserconfig.xml" />
     <meta name="format-detection" content="telephone=no" />
-    <meta property="og:image" content="https://choptop84.github.io/abyssbox-app/icon_maskable_192.png" />
-    <link rel="apple-touch-icon" sizes="180x180" href="icon_32.png" />
+    <meta property="og:image" content="https://thatoneuser22.github.io/UserBox/icon_maskable_192.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png" />
     <link rel="icon" type="image/png" sizes="32x32" href="icon_32.png" />
     <link rel="manifest" href="./manifest.webmanifest" />
     <link href="https://fonts.googleapis.com/css?family=B612" rel="stylesheet" media="none" onload="if (this.media != 'all') this.media='all';" /> <!-- this is a trick to load CSS asynchronously. -->
@@ -44,7 +56,7 @@
         }
         
         #modTitle::before {
-            content: "AbyssBox Pro";
+            content: "UserBox";
         }
 
         .modTitle::before {
@@ -361,7 +373,7 @@
         const el  = document.getElementById('secondImage');
         
         // console.log(image, el);
-        if (image != null && image !== "null" && image !== "undefined") {
+        if (localStorage.getItem('colorTheme') === 'custom' && image != null && image !== "null" && image !== "undefined") {
             el.style.backgroundImage="url(" + image + ")";
             el.style.backgroundRepeat= "repeat";
         } 
@@ -369,10 +381,10 @@
     </script>
     <div id="beepboxEditorContainer">
         <noscript>
-            Sorry, AbyssBox and UltraBox require a JavaScript-enabled browser.
+            Sorry, UserBox requires a JavaScript-enabled browser.
         </noscript>
     </div>
-    <div id="onlinePresence" title="Live browsers currently viewing AbyssBox Pro">
+    <div id="onlinePresence" title="Live browsers currently viewing UserBox">
         <div id="onlinePresenceTop">
             <span id="onlinePresenceDot" class="connecting"></span>
             <span id="onlinePresenceCount">Connecting...</span>
@@ -387,10 +399,10 @@
             </h1>
             
             <p id="introduction">
-                Hey, this is a modification so I can give AbyssBox my own spin on it, I hope you guys enjoy it!
+                Welcome to UserBox, a music editor built on AbyssBox and BeepBox.
                 <br>
                 <br>
-                AbyssBox contains the effort of many people and BeepBox mods, each of those people can be found in the <a href="./credits.html">credits</a>.
+                UserBox contains the effort of many people and BeepBox mods; you can find them in the <a href="./credits.html">credits</a>.
                 <br>
                 <br>
             </p>
@@ -409,7 +421,7 @@
             <div class="bsky-embed" style="justify-content: center; display: flex; cursor: pointer; margin-top: 10px;">
                 <div onclick="window.open('./manual.html', '_blank')" style="height: 80px; background: #421422; width: 450px; border-radius: 20px; border: solid 1px #8d2b50; display: flex; flex-direction: row; align-items: center;">
                     <div style="height: 100%;width: 80px;border-right: 1px solid #8d2b50;/*! border-radius: 10px; */background-image: url(./image_assets/manual.png);background-size: 90%;background-repeat: no-repeat;background-position: center;"></div>
-                    <div style="flex: 1;text-align: center;font-size: 21px;text-decoration: underline;color: #ff668c;">Find the AbyssBox User Manual here!</div>
+                    <div style="flex: 1;text-align: center;font-size: 21px;text-decoration: underline;color: #ff668c;">Find the UserBox Manual here!</div>
                 </div>
             </div>
             <!--
@@ -434,7 +446,7 @@
                     </h2>
                     <p>
                         You can add or remove notes by clicking on the gray rows at the top.
-                        AbyssBox automatically plays the notes out loud for you. Try it!
+                        UserBox automatically plays the notes out loud for you. Try it!
 			    <img id="Hotdog" src="image_assets/hotdog.png" width="500" height="333" onclick="changeHotdogSize()"/>
 				<script>
 				function changeHotdogSize(){
@@ -481,7 +493,7 @@
                         </span>
                     </p>
                     <p>
-                        AbyssBox can play several rows of patterns simultaneously, and each row has its own set of patterns.
+                        UserBox can play several rows of patterns simultaneously, and each row has its own set of patterns.
                         Most rows can play melodies or harmonies, but the bottom row is for drums.
                     </p>
                     <p>
@@ -504,16 +516,16 @@
                         About
                     </h2>
                     <p>
-                        Hey, this is a modification so I can give AbyssBox my own spin on it, I hope you guys enjoy it!
+                        UserBox builds on AbyssBox and BeepBox. See the credits for the people behind those projects.
                     </p>
                     <p>
-                       AbyssBox nor UltraBox does not claim ownership over songs created with it, so original songs belong to their authors.
+                       UserBox does not claim ownership over songs created with it, so original songs belong to their authors.
                     </p>
                     <p>
-                      None of AbyssBox, it's creator, Ultrabox nor its creators assume responsibility for any copyrighted material played on AbyssBox. No songs are ever received, recorded, or distributed by AbyssBox's servers. All song data is contained in the URL after the hash (#) mark, and Abyssbox running inside your browser converts that data into sound waves.
+                      UserBox does not assume responsibility for copyrighted material played with it. Songs are rendered in your browser from data in the URL after the hash (#) mark.
                     </p>
                     <p>
-                        AbyssBox does not collect, track, or share any user data.
+                        UserBox does not collect, track, or share any user data.
                     </p>
                     <p id="offline-instructions">
                         <!--
@@ -521,12 +533,9 @@
                         -->
                     </p>
                     <p>
-                        You can download and use <a href="https://github.com/choptop84/abyssbox-source" target="_blank">the source code</a> under the MIT license.
+                        You can download and use <a href="https://github.com/Thatoneuser22/Abyssbox-Pro" target="_blank">the source code</a> under the MIT license.
                         The original BeepBox source code by John Nesky can be found <a href="https://github.com/johnnesky/beepbox" target="_blank">here</a>.
                     </p>
-                    <p>
-                        The patch notes of AbyssBox are available <a href="./patch-notes">here</a>.
-                    </p>     
                 </section>
             </main>
             <!-- <aside class="twitter-column"> -->
@@ -541,7 +550,7 @@
         </div>
 
         <div style="text-align: center; margin: 28px 0 18px; color: var(--secondary-text, #aaa); font-size: 0.9rem;">
-            AbyssBox Pro 0.13
+            UserBox 0.13
         </div>
     </div>
 

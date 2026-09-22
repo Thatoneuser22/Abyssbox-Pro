@@ -22,6 +22,9 @@ export class ThemePrompt implements Prompt {
 // theme option format:
 //		option({value:"the theme name from ColorConfig.ts"}, "Whatever you want it to be called"),
 		public readonly _themeSelect: HTMLSelectElement = select({ style: "width: 100%;", id:"themeSelect" },
+		optgroup({ label: "UserBox's Themes" },
+			option({ value: "UserBox"}, "UserBox"),
+		),
 		optgroup({ label: "AbyssBox Themes" },
 			option({ value: "AbyssBox Classic"}, "AbyssBox Classic"),
 			option({ value: "AbyssBox Competitive"}, "AbyssBox Competitive"),
@@ -245,7 +248,7 @@ export class ThemePrompt implements Prompt {
 			if (this.lastTheme != null) {
 				ColorConfig.setTheme(this.lastTheme);
 			} else {
-				ColorConfig.setTheme("AbyssBox Classic");
+				ColorConfig.setTheme("UserBox");
 			}
 			this._doc.undo();
 		

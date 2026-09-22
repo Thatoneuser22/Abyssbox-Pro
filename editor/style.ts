@@ -1898,6 +1898,40 @@ button.mobilePauseButton::before {
 	flex-shrink: 0;
 }
 
+.beepboxEditor .pianoRollToolbar {
+	box-sizing: border-box;
+	width: 100%;
+	margin-top: 2px;
+	padding: 0 0 0.5em;
+	border: 0;
+}
+
+.beepboxEditor .pianoRollSectionTitle {
+	margin: 2px 0;
+	text-align: center;
+	font-weight: normal !important;
+	color: ${ColorConfig.secondaryText};
+}
+
+.beepboxEditor .pianoRollControl {
+	box-sizing: border-box;
+	width: 100%;
+	min-height: var(--button-size);
+}
+
+.beepboxEditor .independentNotesToggle > span {
+	white-space: nowrap;
+}
+
+.beepboxEditor .independentNotesToggle > input[type="checkbox"],
+.beepboxEditor .portamentoRow > input[type="checkbox"] {
+	width: 1.2em !important;
+	height: 1.2em !important;
+	margin: 0;
+	flex: 0 0 auto;
+	accent-color: ${ColorConfig.indicatorPrimary};
+}
+
 .beepboxEditor .menu-area {
 	display: flex;
 	flex-direction: column;

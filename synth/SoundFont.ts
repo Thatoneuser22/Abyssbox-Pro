@@ -55,6 +55,10 @@ interface GeneratorState {
     fineTune: number;
     rootKey: number;
     attenuation: number;
+    attackVolEnv: number;
+    releaseVolEnv: number;
+    attackVolEnvSet: boolean;
+    releaseVolEnvSet: boolean;
 }
 
 function newGeneratorState(): GeneratorState {
@@ -74,6 +78,10 @@ function newGeneratorState(): GeneratorState {
         fineTune: 0,
         rootKey: -1,
         attenuation: 0,
+        attackVolEnv: 0,
+        releaseVolEnv: 0,
+        attackVolEnvSet: false,
+        releaseVolEnvSet: false,
     };
 }
 
@@ -144,6 +152,14 @@ function applyGenerators(state: GeneratorState, generators: SoundFontGenerator[]
             case 3: state.endLoopOffset += generator.signedAmount; break;
             case 4: state.startOffset += generator.signedAmount * 32768; break;
             case 12: state.endOffset += generator.signedAmount * 32768; break;
+            case 34:
+                state.attackVolEnv += generator.signedAmount;
+                state.attackVolEnvSet = true;
+                break;
+            case 38:
+                state.releaseVolEnv += generator.signedAmount;
+                state.releaseVolEnvSet = true;
+                break;
             case 41: state.instrument = generator.amount; break;
             case 43: {
                 const low = generator.amount & 0xff;
@@ -184,6 +200,8 @@ export class SoundFontZone {
     public readonly loopEnd: number;
     public readonly loopMode: number;
     public readonly gain: number;
+    public readonly attackSeconds: number;
+    public readonly releaseSeconds: number;
     public readonly sampleStart: number;
     public readonly sampleEnd: number;
     private _wave: Float32Array | null = null;
@@ -215,6 +233,17 @@ export class SoundFontZone {
         this.rootKey = state.rootKey >= 0 ? state.rootKey : headerRoot;
         this.tuningCents = state.coarseTune * 100 + state.fineTune + sample.pitchCorrection;
         this.gain = Math.pow(10, -Math.max(0, state.attenuation) / 200.0);
+        this.attackSeconds = state.attackVolEnvSet
+            ? SoundFontZone._timecentsToSeconds(state.attackVolEnv)
+            : 0.0;
+        this.releaseSeconds = state.releaseVolEnvSet
+            ? SoundFontZone._timecentsToSeconds(state.releaseVolEnv)
+            : 0.0;
+    }
+
+    private static _timecentsToSeconds(timecents: number): number {
+        if (!Number.isFinite(timecents) || timecents <= -12000) return 0.0;
+        return Math.min(100.0, Math.pow(2.0, Math.min(8000, timecents) / 1200.0));
     }
 
     public getWave(): Float32Array {

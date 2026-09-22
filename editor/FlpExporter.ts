@@ -372,7 +372,7 @@ export function exportFlStudioProject(song: any, options: FlpExportOptions): Arr
 
     // Project info.
     writeAsciiEvent(data, 199, "21.2.3.4004");
-    writeUnicodeEvent(data, 194, options.title || song.title || "AbyssBox Pro Export");
+    writeUnicodeEvent(data, 194, options.title || song.title || "UserBox Export");
     writeDwordEvent(data, 156, Math.round(song.getBeatsPerMinute() * 1000));
 
     // Time signature.
@@ -380,7 +380,7 @@ export function exportFlStudioProject(song: any, options: FlpExportOptions): Arr
     writeByteEvent(data, 18, 4);
 
     // One display group is enough for the exported rack channels.
-    writeUnicodeEvent(data, 231, "AbyssBox Pro");
+    writeUnicodeEvent(data, 231, "UserBox");
 
     for (const rack of rackChannels) {
         writeChannelEvents(data, rack);

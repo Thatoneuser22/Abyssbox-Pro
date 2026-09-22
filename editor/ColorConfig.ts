@@ -15,7 +15,7 @@ export class ColorConfig {
     public static colorLookup: Map<number, ChannelColors> = new Map<number, ChannelColors>();
 	public static usesColorFormula: boolean = false;
 	public static usesPianoScheme: boolean = false;
-	public static currentSetTheme: string = "AbyssBox Classic";
+	public static currentSetTheme: string = "UserBox";
     public static readonly themes: { [name: string]: string } = {
       "AbyssBox Classic": `
 			:root {		
@@ -21317,6 +21317,172 @@ export class ColorConfig {
 			}`}`,
     };
 
+    static {
+        // Inherit a complete set of channel variables, then apply UserBox's
+        // violet and magenta palette on top.
+        this.themes["UserBox"] = this.themes["blutonium"] + `
+            :root {
+                --page-margin: #100917;
+                --editor-background: #1b1027;
+                --primary-text: #f8ecff;
+                --secondary-text: #dec0ee;
+                --inverted-text: #1a0e24;
+                --hover-preview: #ffd6f3;
+                --playhead: #fff0fc;
+                --text-selection: rgba(215, 86, 182, 0.55);
+                --box-selection-fill: rgba(215, 86, 182, 0.2);
+                --loop-accent: #7d3a80;
+                --link-accent: #f39ad8;
+                --ui-widget-background: #382044;
+                --ui-widget-focus: #56305d;
+                --pitch-background: #281733;
+                --tonic: #663a70;
+                --fifth-note: #50305f;
+                --third-note: #442750;
+                --white-piano-key: #e7c7e9;
+                --black-piano-key: #4a2a57;
+                --white-piano-key-text: #24142d;
+                --black-piano-key-text: #fff1fc;
+                --track-editor-bg-pitch: #40204f;
+                --track-editor-bg-pitch-dim: #24122f;
+                --track-editor-bg-noise: #4b214e;
+                --track-editor-bg-noise-dim: #2a1430;
+                --track-editor-bg-mod: #38204c;
+                --track-editor-bg-mod-dim: #21152f;
+                --multiplicative-mod-slider: #a366b1;
+                --overwriting-mod-slider: #bb5d9e;
+                --indicator-primary: #e783c4;
+                --indicator-secondary: #63366d;
+                --select2-opt-group: #2a1838;
+                --input-box-outline: #140b20;
+                --mute-button-normal: #cc6d9e;
+                --mute-button-mod: #9e66c5;
+                --mod-title: #f0a0d7;
+                --progress-bar: #cf75b6;
+                --scrollbar-color: #925092;
+                --note-flash: #ffe4f7;
+                --note-flash-secondary: #f0a0d777;
+            }
+            html {
+                background-color: #0b0711 !important;
+                background-image: linear-gradient(to bottom, #5c3973, #08060d) !important;
+            }
+            html::before, html::after {
+                content: "";
+                position: fixed;
+                top: 0;
+                bottom: 0;
+                width: max(0px, calc((100vw - 770px) / 2));
+                z-index: 0;
+                pointer-events: none;
+                opacity: 0.20;
+                background-image: url("./image_assets/userbox_lilith_background.png");
+                background-size: 920px calc(100vh + 100px);
+                background-repeat: no-repeat;
+                background-position: -46px -70px;
+                filter: blur(6px);
+                animation: userbox-background-drift 7s linear infinite alternate;
+            }
+            html::before { left: 0; }
+            html::after { right: 0; }
+            body {
+                background: transparent !important;
+                position: relative;
+                z-index: 1;
+            }
+            .pianoRollToolbar {
+                box-sizing: border-box;
+                width: 100%;
+                margin-top: 2px;
+                padding: 0 0 9px;
+            }
+            .pianoRollSectionTitle {
+                margin: 2px 0;
+                text-align: center;
+                color: var(--secondary-text);
+                font-size: 13px;
+                font-weight: normal !important;
+            }
+            .pianoRollToolbar .pianoRollControl {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                box-sizing: border-box;
+                width: 100%;
+                min-height: 26px;
+                border: 0;
+                background: transparent;
+            }
+            .pianoRollControl input[type="checkbox"],
+            .beepboxEditor .portamentoRow input[type="checkbox"] {
+                appearance: none !important;
+                position: relative;
+                width: 15px !important;
+                height: 15px !important;
+                margin: 0;
+                border: 1px solid #a267aa !important;
+                border-radius: 3px !important;
+                background: #281733 !important;
+                box-shadow: none !important;
+                flex: none;
+                cursor: pointer;
+            }
+            .pianoRollControl input[type="checkbox"]:checked,
+            .beepboxEditor .portamentoRow input[type="checkbox"]:checked {
+                border-color: #f1afd7 !important;
+                background: var(--indicator-primary) !important;
+            }
+            .pianoRollControl input[type="checkbox"]:checked::after,
+            .beepboxEditor .portamentoRow input[type="checkbox"]:checked::after {
+                content: "" !important;
+                position: absolute;
+                left: 4px;
+                top: 1px;
+                width: 4px;
+                height: 8px;
+                border: solid #281733;
+                border-width: 0 2px 2px 0;
+                transform: rotate(45deg);
+            }
+            .pianoRollControl input[type="checkbox"]:focus-visible,
+            .beepboxEditor .portamentoRow input[type="checkbox"]:focus-visible {
+                outline: 2px solid var(--hover-preview);
+                outline-offset: 2px;
+            }
+            .beepboxEditor .portamentoRow input[type="checkbox"] {
+                margin-left: 0;
+            }
+            .beepboxEditor .portamentoRow {
+                justify-content: flex-start;
+                gap: 8px;
+            }
+            @keyframes userbox-background-drift {
+                from { background-position: -46px -70px; }
+                to { background-position: -8px -22px; }
+            }
+        `;
+        const channelPalettes: Array<[string, string[]]> = [
+            ["pitch", ["#f29acb", "#d49af3", "#ed83bb", "#b597eb", "#eab3e1", "#c276d1", "#f6a8d7", "#a985d3", "#d681bf", "#f1b9e2"]],
+            ["noise", ["#d496ed", "#ed8db9", "#b682d4", "#f1add4", "#c795e7"]],
+            ["mod", ["#d4a0e9", "#ee9bce", "#b389dc", "#de8cc2"]],
+        ];
+        for (const [kind, colors] of channelPalettes) {
+            colors.forEach((color: string, index: number) => {
+                const number: number = index + 1;
+                const rgb: number = parseInt(color.slice(1), 16);
+                const secondary: string = "#" + [16, 8, 0].map((shift: number) =>
+                    Math.round(((rgb >> shift) & 255) * 0.62 + 22).toString(16).padStart(2, "0")
+                ).join("");
+                this.themes["UserBox"] += `:root {
+                    --${kind}${number}-secondary-channel: ${secondary};
+                    --${kind}${number}-primary-channel: ${color};
+                    --${kind}${number}-secondary-note: ${secondary};
+                    --${kind}${number}-primary-note: ${color};
+                }`;
+            });
+        }
+    }
+
     public static readonly pageMargin: string = "var(--page-margin)";
     public static readonly editorBackground: string = "var(--editor-background)";
     public static readonly hoverPreview: string = "var(--hover-preview)";
@@ -21964,7 +22130,7 @@ export class ColorConfig {
 
     public static setTheme(name: string): void {
 		let theme: string = this.themes[name];
-		if (theme == undefined) theme = this.themes["AbyssBox Classic"];
+		if (theme == undefined) theme = this.themes["UserBox"];
 		this._styleElement.textContent = theme;
 		this.currentSetTheme = name;
 
@@ -22072,4 +22238,3 @@ export class ColorConfig {
         return getComputedStyle(this._styleElement).getPropertyValue(name);
     }
 }
-

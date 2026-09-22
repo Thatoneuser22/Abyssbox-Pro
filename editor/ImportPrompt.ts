@@ -45,7 +45,7 @@ export class ImportPrompt implements Prompt {
 			"BeepBox songs can be exported and re-imported as .json files. You could also use other means to make .json files for BeepBox as long as they follow the same structure.",
 		),
 			p({style: "text-align: left; margin: 0.5em 0;"},
-			"AbyssBox Pro can also import .mid files and FL Studio .flp projects. FLP import focuses on piano-roll notes, patterns, playlist timing, tempo, slide notes, and basic mono/portamento settings.",
+			"UserBox can also import .mid files and FL Studio .flp projects. FLP import focuses on piano-roll notes, patterns, playlist timing, tempo, slide notes, and basic mono/portamento settings.",
 		),
 		// div({class: "selectContainer", style: "width: 100%;"}, "Import Mode (for json): ", this._modeImportSelect),
 			this._modeImportSelect,

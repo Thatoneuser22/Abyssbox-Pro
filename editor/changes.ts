@@ -1,7 +1,7 @@
 // Copyright (c) 2012-2022 John Nesky and contributing authors, distributed under the MIT license, see accompanying the LICENSE.md file.
 
 import { Algorithm, Dictionary, FilterType, SustainType, InstrumentType, EffectType, AutomationTarget, Config, effectsIncludeDistortion } from "../synth/SynthConfig";
-import { NotePin, Note, makeNotePin, Pattern, FilterSettings, FilterControlPoint, SpectrumWave, HarmonicsWave, Instrument, Channel, Song, Synth, clamp } from "../synth/synth";
+import { NoteType, NotePin, Note, makeNotePin, Pattern, FilterSettings, FilterControlPoint, SpectrumWave, HarmonicsWave, Instrument, Channel, Song, Synth, clamp } from "../synth/synth";
 import { Preset, PresetCategory, EditorConfig } from "./EditorConfig";
 import { Change, ChangeGroup, ChangeSequence, UndoableChange } from "./Change";
 import { SongDocument } from "./SongDocument";
@@ -150,6 +150,7 @@ function projectNoteIntoBar(oldNote: Note, timeOffset: number, noteStartPart: nu
     // Create a new note, and interpret the pitch bend and size events
     // to determine where we need to insert pins to control interval and volume.
     const newNote: Note = new Note(-1, noteStartPart, noteEndPart, Config.noteSizeMax, false);
+    newNote.noteType = oldNote.noteType;
     newNote.pins.length = 0;
     newNote.pitches.length = 0;
     const newNoteLength: number = noteEndPart - noteStartPart;
@@ -201,7 +202,11 @@ function projectNoteIntoBar(oldNote: Note, timeOffset: number, noteStartPart: nu
         newNote.continuesLastPattern = false;
         if (newNotes.length > 0 && oldNote.continuesLastPattern) {
             const prevNote: Note = newNotes[newNotes.length - 1];
-            if (prevNote.end == newNote.start && Synth.adjacentNotesHaveMatchingPitches(prevNote, newNote)) {
+            if (
+                prevNote.end == newNote.start
+                && prevNote.noteType == newNote.noteType
+                && Synth.adjacentNotesHaveMatchingPitches(prevNote, newNote)
+            ) {
                 joinedWithPrevNote = true;
                 const newIntervalOffset: number = prevNote.pins[prevNote.pins.length - 1].interval;
                 const newTimeOffset: number = prevNote.end - prevNote.start;
@@ -3258,6 +3263,13 @@ export class ChangePaste extends ChangeGroup {
                 const noteEnd: number = noteObject["end"] + selectionStart;
                 if (noteStart >= selectionEnd) break;
                 const note: Note = new Note(noteObject["pitches"][0], noteStart, noteEnd, noteObject["pins"][0]["size"], false);
+                const copiedNoteType: number = Number(noteObject["noteType"]);
+                note.noteType =
+                    copiedNoteType == NoteType.slide
+                        ? NoteType.slide
+                        : copiedNoteType == NoteType.portamento
+                            ? NoteType.portamento
+                            : NoteType.normal;
                 note.pitches.length = 0;
                 for (const pitch of noteObject["pitches"]) {
                     note.pitches.push(pitch);
@@ -4093,7 +4105,14 @@ export function comparePatternNotes(a: Note[], b: Note[]): boolean {
     for (let noteIndex: number = 0; noteIndex < a.length; noteIndex++) {
         const oldNote: Note = a[noteIndex];
         const newNote: Note = b[noteIndex];
-        if (newNote.start != oldNote.start || newNote.end != oldNote.end || newNote.pitches.length != oldNote.pitches.length || newNote.pins.length != oldNote.pins.length) {
+        if (
+            newNote.start != oldNote.start
+            || newNote.end != oldNote.end
+            || newNote.noteType != oldNote.noteType
+            || newNote.continuesLastPattern != oldNote.continuesLastPattern
+            || newNote.pitches.length != oldNote.pitches.length
+            || newNote.pins.length != oldNote.pins.length
+        ) {
             return false;
         }
 
@@ -4617,11 +4636,172 @@ export class ChangePatternSelection extends UndoableChange {
     }
 }
 
+function independentNotesConflict(a: Note, b: Note): boolean {
+    if (a.end <= b.start || a.start >= b.end) return false;
+
+    const aType: NoteType = a.noteType == undefined ? NoteType.normal : a.noteType;
+    const bType: NoteType = b.noteType == undefined ? NoteType.normal : b.noteType;
+    const aSlide: boolean = aType == NoteType.slide;
+    const bSlide: boolean = bType == NoteType.slide;
+
+    // Slide controllers may overlap playable notes and other target lanes.
+    if (aSlide != bSlide) return false;
+    if (aSlide && bSlide) {
+        for (const pitch of a.pitches) {
+            if (b.pitches.indexOf(pitch) != -1) return true;
+        }
+        return false;
+    }
+
+    for (const pitch of a.pitches) {
+        if (b.pitches.indexOf(pitch) != -1) return true;
+    }
+
+    return false;
+}
+
+function sortIndependentNotes(notes: Note[]): void {
+    notes.sort((a: Note, b: Note) => {
+        if (a.start != b.start) return a.start - b.start;
+
+        const aPitch: number = a.pitches.length > 0 ? a.pitches[0] : 0;
+        const bPitch: number = b.pitches.length > 0 ? b.pitches[0] : 0;
+        if (aPitch != bPitch) return aPitch - bPitch;
+
+        return a.end - b.end;
+    });
+}
+
 export class ChangeDragSelectedNotes extends ChangeSequence {
-    constructor(doc: SongDocument, channelIndex: number, pattern: Pattern, parts: number, transpose: number) {
+    constructor(
+        doc: SongDocument,
+        channelIndex: number,
+        pattern: Pattern,
+        parts: number,
+        transpose: number,
+        independentNotes: boolean = false,
+    ) {
         super();
 
         if (parts == 0 && transpose == 0) return;
+
+        const useIndependentDrag: boolean =
+            independentNotes
+            && doc.selection.patternSelectionActive
+            && !doc.song.getChannelIsNoise(channelIndex)
+            && !doc.song.getChannelIsMod(channelIndex);
+
+        if (useIndependentDrag) {
+            const splitChange: ChangeSplitNotesAtSelection = new ChangeSplitNotesAtSelection(doc, pattern);
+
+            const oldStart: number = doc.selection.patternSelectionStart;
+            const oldEnd: number = doc.selection.patternSelectionEnd;
+            const barEnd: number = doc.song.beatsPerBar * Config.partsPerBeat;
+            const newStart: number = Math.max(0, Math.min(barEnd, oldStart + parts));
+            const newEnd: number = Math.max(0, Math.min(barEnd, oldEnd + parts));
+
+            const originals: Note[] = [];
+            const stationary: Note[] = [];
+
+            for (const note of pattern.notes) {
+                if (note.end <= oldStart || note.start >= oldEnd) {
+                    stationary.push(note);
+                } else {
+                    originals.push(note);
+                }
+            }
+
+            const moved: Note[] = [];
+
+            for (const original of originals) {
+                const note: Note = original.clone();
+                note.start += parts;
+                note.end += parts;
+
+                if (note.end <= newStart || note.start >= newEnd) continue;
+
+                new ChangeNoteLength(
+                    null,
+                    note,
+                    Math.max(note.start, newStart),
+                    Math.min(newEnd, note.end),
+                );
+
+                for (let i: number = 0; i < Math.abs(transpose); i++) {
+                    new ChangeTransposeNote(
+                        doc,
+                        channelIndex,
+                        note,
+                        transpose > 0,
+                        doc.prefs.notesOutsideScale,
+                    );
+                }
+
+                moved.push(note);
+            }
+
+            sortIndependentNotes(moved);
+
+            const accepted: Note[] = [];
+            let collision: boolean = false;
+
+            for (const movingNote of moved) {
+                for (const existingNote of stationary) {
+                    if (independentNotesConflict(movingNote, existingNote)) {
+                        collision = true;
+                        break;
+                    }
+                }
+                if (collision) break;
+
+                for (const acceptedNote of accepted) {
+                    if (independentNotesConflict(movingNote, acceptedNote)) {
+                        collision = true;
+                        break;
+                    }
+                }
+                if (collision) break;
+
+                accepted.push(movingNote);
+            }
+
+            if (collision) {
+                splitChange.undo();
+                return;
+            }
+
+            this.append(splitChange);
+            this.append(new ChangePatternSelection(doc, newStart, newEnd));
+
+            for (let i: number = pattern.notes.length - 1; i >= 0; i--) {
+                const note: Note = pattern.notes[i];
+                if (note.end <= oldStart || note.start >= oldEnd) continue;
+                this.append(new ChangeNoteAdded(doc, pattern, note, i, true));
+            }
+
+            for (const note of accepted) {
+                let insertionIndex: number = 0;
+
+                while (insertionIndex < pattern.notes.length) {
+                    const existing: Note = pattern.notes[insertionIndex];
+
+                    if (existing.start > note.start) break;
+                    if (existing.start == note.start) {
+                        const existingPitch: number = existing.pitches.length > 0 ? existing.pitches[0] : 0;
+                        const notePitch: number = note.pitches.length > 0 ? note.pitches[0] : 0;
+
+                        if (existingPitch > notePitch) break;
+                        if (existingPitch == notePitch && existing.end > note.end) break;
+                    }
+
+                    insertionIndex++;
+                }
+
+                this.append(new ChangeNoteAdded(doc, pattern, note, insertionIndex, false));
+            }
+
+            return;
+        }
 
         if (doc.selection.patternSelectionActive) {
             this.append(new ChangeSplitNotesAtSelection(doc, pattern));
@@ -4643,7 +4823,7 @@ export class ChangeDragSelectedNotes extends ChangeSequence {
         }
 
         this.append(new ChangePatternSelection(doc, newStart, newEnd));
-        const draggedNotes = [];
+        const draggedNotes: Note[] = [];
         let noteInsertionIndex: number = 0;
         let i: number = 0;
         while (i < pattern.notes.length) {
@@ -4670,7 +4850,6 @@ export class ChangeDragSelectedNotes extends ChangeSequence {
             for (let i: number = 0; i < Math.abs(transpose); i++) {
                 this.append(new ChangeTransposeNote(doc, channelIndex, note, transpose > 0, doc.prefs.notesOutsideScale));
             }
-
         }
     }
 }

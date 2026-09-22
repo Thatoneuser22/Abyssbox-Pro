@@ -9,7 +9,7 @@ import {SongDocument} from "./SongDocument";
 import {ExportPrompt} from "./ExportPrompt";
 import {ChangePreset} from "./changes";
 import {setPresets,totalPresets} from "./PresetPrompt"
-import { MultiplayerClient } from "./Multiplayer";
+// import { MultiplayerClient } from "./Multiplayer";
 
 //namespace beepbox {
 
@@ -22,7 +22,7 @@ const beepboxEditorContainer: HTMLElement = document.getElementById("beepboxEdit
 beepboxEditorContainer.appendChild(editor.mainLayer);
 editor.whenUpdated();
 
-new MultiplayerClient(doc, editor.mainLayer);
+// new MultiplayerClient(doc, editor.mainLayer);
 
 // Fade-in transitions
 editor.mainLayer.className += " load";

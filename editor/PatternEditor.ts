@@ -179,17 +179,19 @@ export class PatternEditor {
     private readonly _independentNotesInput: HTMLInputElement = HTML.input({ type: "checkbox" });
     private readonly _independentNotesControl: HTMLLabelElement = HTML.label(
         {
-            style: "display: none; align-items: center; gap: 5px; padding: 3px 6px; border-radius: 4px; background: rgba(0, 0, 0, 0.30); font-size: 11px; cursor: pointer; user-select: none; opacity: 0.88; transform: scale(1); transition: opacity 160ms ease, transform 220ms cubic-bezier(0.16, 1, 0.3, 1), background-color 180ms ease;",
+            class: "selectRow pianoRollControl independentNotesToggle",
+            style: "display: none; cursor: pointer; user-select: none;",
             title: "Keep notes on different pitches separate instead of combining them into one chord note.",
         },
+        HTML.span({ class: "tip" }, "Independent Notes:"),
         this._independentNotesInput,
-        HTML.span({}, "Independent Notes"),
     );
 
     private readonly _mobileEditModeButton: HTMLButtonElement = HTML.button(
         {
             type: "button",
-            style: "display: none; min-width: 58px; height: 26px; padding: 2px 7px; font-size: 11px; touch-action: manipulation; opacity: 0.88; transform: scale(1); transition: opacity 160ms ease, transform 220ms cubic-bezier(0.16, 1, 0.3, 1);",
+            class: "pianoRollControl",
+            style: "display: none; min-width: 58px; height: 26px; padding: 2px 7px; font-size: 12px; touch-action: manipulation;",
             title: "Switch between moving whole notes and editing pitch bends on touch devices.",
         },
         "Move",
@@ -198,27 +200,31 @@ export class PatternEditor {
     private readonly _snapSelect: HTMLSelectElement = document.createElement("select");
     private readonly _snapControl: HTMLDivElement = HTML.div(
         {
-            style: "display: none; height: 26px; align-items: center; gap: 3px; padding: 2px 5px; border-radius: 4px; background: rgba(0, 0, 0, 0.30); font-size: 11px; opacity: 0.88; transform: scale(1); transition: opacity 160ms ease, transform 220ms cubic-bezier(0.16, 1, 0.3, 1), background-color 180ms ease;",
+            class: "selectRow pianoRollControl",
+            style: "display: none;",
             title: "Piano roll snap. None uses the finest internal timing resolution.",
         },
-        HTML.span({ style: "pointer-events: none;" }, "Snap:"),
-        this._snapSelect,
+        HTML.span({ class: "tip" }, "Snap:"),
+        HTML.div({ class: "selectContainer", style: "width: 61.5%;" }, this._snapSelect),
     );
 
     private readonly _noteTypeSelect: HTMLSelectElement = document.createElement("select");
     private readonly _noteTypeControl: HTMLDivElement = HTML.div(
         {
-            style: "display: none; height: 26px; align-items: center; gap: 4px; padding: 2px 5px; border-radius: 4px; background: rgba(0, 0, 0, 0.30); font-size: 11px; opacity: 0.88; transform: scale(1); transition: opacity 160ms ease, transform 220ms cubic-bezier(0.16, 1, 0.3, 1), background-color 180ms ease;",
+            class: "selectRow pianoRollControl",
+            style: "display: none;",
             title: "Choose what kind of note gets drawn.",
         },
-        HTML.span({ style: "pointer-events: none;" }, "Note:"),
-        this._noteTypeSelect,
+        HTML.span({ class: "tip" }, "Note:"),
+        HTML.div({ class: "selectContainer", style: "width: 61.5%;" }, this._noteTypeSelect),
     );
 
-    private readonly _pianoRollToolbar: HTMLDivElement = HTML.div(
+    public readonly pianoRollControls: HTMLDivElement = HTML.div(
         {
-            style: "display: none; flex: 0 0 auto; min-height: 34px; align-items: center; gap: 7px; padding: 4px 6px; overflow-x: auto; overflow-y: hidden; white-space: nowrap; box-sizing: border-box; background: rgba(0, 0, 0, 0.22); border-bottom: 1px solid rgba(255, 255, 255, 0.08);",
+            class: "pianoRollToolbar editor-controls",
+            style: "display: none; flex-direction: column; gap: 2px;",
         },
+        HTML.div({ class: "pianoRollSectionTitle" }, "Piano Roll"),
         this._independentNotesControl,
         this._snapControl,
         this._mobileEditModeButton,
@@ -247,7 +253,6 @@ export class PatternEditor {
 
     public readonly container: HTMLDivElement = HTML.div(
         { style: "position: relative; height: 100%; min-height: 0; overflow: hidden; display: flex; flex-direction: column; flex-grow: 1;" },
-        this._pianoRollToolbar,
         this._pianoRollViewport,
     );
 
@@ -357,54 +362,11 @@ export class PatternEditor {
         installSmoothButtonTweens();
 
         this._independentNotesInput.checked = getLocalStorageItem("independentNotes", "true") != "false";
-        this._pianoRollToolbar.style.display = this._interactive ? "flex" : "none";
+        this.pianoRollControls.style.display = this._interactive ? "flex" : "none";
         this._independentNotesControl.style.display = this._interactive ? "flex" : "none";
         this._mobileEditModeButton.style.display = this._interactive && this._hasTouchInput ? "" : "none";
         this._snapControl.style.display = this._interactive ? "flex" : "none";
         this._noteTypeControl.style.display = this._interactive ? "flex" : "none";
-
-        if (this._interactive && this._hasTouchInput) {
-            // Keep the toolbar out of the mobile grid sizing.
-            this._pianoRollToolbar.style.position = "absolute";
-            this._pianoRollToolbar.style.top = "0";
-            this._pianoRollToolbar.style.left = "0";
-            this._pianoRollToolbar.style.right = "0";
-            this._pianoRollToolbar.style.zIndex = "5";
-            this._pianoRollToolbar.style.background = "rgba(0, 0, 0, 0.72)";
-        }
-
-        const smoothControls: HTMLElement[] = [
-            this._independentNotesControl,
-            this._snapControl,
-            this._noteTypeControl,
-            this._mobileEditModeButton,
-        ];
-
-        for (const control of smoothControls) {
-            control.addEventListener("mouseenter", () => {
-                control.style.opacity = "1";
-                control.style.transform = "scale(1.018)";
-            });
-
-            control.addEventListener("mouseleave", () => {
-                control.style.opacity = "0.88";
-                control.style.transform = "scale(1)";
-            });
-
-            control.addEventListener("pointerdown", () => {
-                control.style.transition = "transform 75ms cubic-bezier(0.32, 0, 0.67, 0), opacity 100ms ease";
-                control.style.transform = "scale(0.975)";
-            });
-
-            const releaseControl = (): void => {
-                control.style.transition = "opacity 160ms ease, transform 260ms cubic-bezier(0.16, 1, 0.3, 1), background-color 180ms ease";
-                control.style.transform = "scale(1)";
-            };
-
-            control.addEventListener("pointerup", releaseControl);
-            control.addEventListener("pointercancel", releaseControl);
-        }
-
         const snapOptions: { value: string, label: string }[] = [
             { value: "none", label: "(none)" },
             { value: "line", label: "Line" },
@@ -533,7 +495,7 @@ export class PatternEditor {
     }
 
     private _useRoundedPianoNotes(): boolean {
-        return window.localStorage.getItem("flRoundedPianoNotes") == "true";
+        return window.localStorage.getItem("flRoundedPianoNotes") != "false";
     }
 
     private _notesConflict(
@@ -557,9 +519,14 @@ export class PatternEditor {
         // FL-style slide notes are controller notes, so they may overlap playable notes.
         if (placingSlide != existingSlide) return false;
 
-        // Only one slide controller may be active at a time in this implementation.
-        // This prevents two overlapping slide notes from fighting over the same voices.
-        if (placingSlide && existingSlide) return true;
+        // Different slide targets may overlap and independently control different
+        // voices. Only duplicate targets compete for the same controller lane.
+        if (placingSlide && existingSlide) {
+            for (const pitch of pitches) {
+                if (existingNote.pitches.indexOf(pitch) != -1) return true;
+            }
+            return false;
+        }
 
         // Normal/portamento notes may overlap in time as long as they are on different pitches.
         for (const pitch of pitches) {
@@ -578,7 +545,22 @@ export class PatternEditor {
         noteType: NoteType,
     ): boolean {
         if (!this._independentNotesEnabled()) return true;
-        if (end <= start || pitches.length == 0) return false;
+        const barEnd: number = this._doc.song.beatsPerBar * Config.partsPerBeat;
+        if (
+            !Number.isFinite(start)
+            || !Number.isFinite(end)
+            || start < 0
+            || end > barEnd
+            || end <= start
+            || pitches.length == 0
+            || pitches.some((pitch: number) =>
+                !Number.isFinite(pitch)
+                || pitch < 0
+                || pitch > this._getMaxPitch()
+            )
+        ) {
+            return false;
+        }
 
         for (const existingNote of pattern.notes) {
             if (this._notesConflict(existingNote, movingNote, start, end, pitches, noteType)) {
@@ -589,200 +571,86 @@ export class PatternEditor {
         return true;
     }
 
+    private _independentNotesAreExactDuplicates(a: Note, b: Note): boolean {
+        const aType: NoteType = a.noteType == undefined ? NoteType.normal : a.noteType;
+        const bType: NoteType = b.noteType == undefined ? NoteType.normal : b.noteType;
+
+        if (aType != bType || a.start != b.start || a.end != b.end) return false;
+        if (a.pitches.length != b.pitches.length || a.pins.length != b.pins.length) return false;
+
+        // Chord pitch order is not musically significant. Compare it as a set so
+        // imported duplicates with a different pitch order are still recognized,
+        // without accidentally deleting another chord that merely shares its root.
+        const aPitches: number[] = a.pitches.concat().sort((x: number, y: number) => x - y);
+        const bPitches: number[] = b.pitches.concat().sort((x: number, y: number) => x - y);
+        for (let i: number = 0; i < aPitches.length; i++) {
+            if (aPitches[i] != bPitches[i]) return false;
+        }
+
+        for (let i: number = 0; i < a.pins.length; i++) {
+            const aPin: NotePin = a.pins[i];
+            const bPin: NotePin = b.pins[i];
+            if (aPin.interval != bPin.interval || aPin.time != bPin.time || aPin.size != bPin.size) return false;
+        }
+
+        return true;
+    }
+
     private _spawnNotePlacementFx(note: Note): void {
-        if (!this._interactive || this._doc.song.getChannelIsMod(this._doc.channel)) return;
-
-        if (this._placementFxContainer.parentNode == this._svg) {
-            this._svg.insertBefore(this._placementFxContainer, this._svgPreview);
-        }
-
         const channelColor = ColorConfig.getChannelColor(this._doc.song, this._doc.channel);
-        const fillColor: string = channelColor.primaryNote;
-        const outlineColor: string = channelColor.secondaryNote;
-        const slideOffset: number = note.noteType == NoteType.slide ? 0.18 : 0.0;
-
-        for (const pitch of note.pitches) {
-            const group: SVGGElement = document.createElementNS("http://www.w3.org/2000/svg", "g");
-            group.setAttribute("pointer-events", "none");
-            group.style.setProperty("transform-box", "fill-box");
-            group.style.setProperty("transform-origin", "center");
-            group.style.setProperty("will-change", "transform, opacity");
-
-            const ghost: SVGPathElement = SVG.path();
-            ghost.setAttribute("fill", fillColor);
-            ghost.setAttribute("fill-opacity", "0.42");
-            ghost.setAttribute("stroke", outlineColor);
-            ghost.setAttribute("stroke-width", "1.2");
-            ghost.setAttribute("stroke-opacity", "0.95");
-            ghost.setAttribute("stroke-linejoin", "round");
-            ghost.setAttribute("stroke-linecap", "round");
-            ghost.setAttribute("pointer-events", "none");
-
-            this._drawNote(
-                ghost,
-                pitch + slideOffset,
-                note.start,
-                note.pins,
-                (this._pitchHeight - this._pitchBorder) / 2 + 1,
-                true,
-                this._octaveOffset,
-            );
-
-            const outline: SVGPathElement = SVG.path();
-            outline.setAttribute("fill", "none");
-            outline.setAttribute("stroke", outlineColor);
-            outline.setAttribute("stroke-width", "2");
-            outline.setAttribute("stroke-opacity", "0.92");
-            outline.setAttribute("stroke-linejoin", "round");
-            outline.setAttribute("stroke-linecap", "round");
-            outline.setAttribute("pointer-events", "none");
-
-            this._drawNote(
-                outline,
-                pitch + slideOffset,
-                note.start,
-                note.pins,
-                (this._pitchHeight - this._pitchBorder) / 2 + 1,
-                false,
-                this._octaveOffset,
-            );
-
-            group.appendChild(ghost);
-            group.appendChild(outline);
-            this._placementFxContainer.appendChild(group);
-
-            while (this._placementFxContainer.childElementCount > 48) {
-                this._placementFxContainer.firstElementChild?.remove();
-            }
-
-            group.style.opacity = "1";
-            group.style.transform = "scale(0.985)";
-
-            const duration: number = 520;
-            const startScale: number = 0.985;
-            const endScale: number = 1.145;
-
-            window.requestAnimationFrame(() => {
-                window.requestAnimationFrame(() => {
-                    const startedAt: number = performance.now();
-
-                    const animate = (now: number): void => {
-                        if (!group.isConnected) return;
-
-                        const progress: number = Math.max(0, Math.min(1, (now - startedAt) / duration));
-                        const eased: number = 1 - Math.pow(1 - progress, 3);
-
-                        group.style.opacity = "" + (1 - eased);
-                        group.style.transform = "scale(" + (startScale + (endScale - startScale) * eased) + ")";
-
-                        if (progress < 1) {
-                            window.requestAnimationFrame(animate);
-                        } else {
-                            group.remove();
-                        }
-                    };
-
-                    window.requestAnimationFrame(animate);
-                });
-            });
-        }
+        this._spawnNoteFlash(note, note.pitches, channelColor.primaryNote, channelColor.secondaryNote, false);
     }
 
     private _spawnNoteDeletionFx(note: Note, onlyPitch: number | null = null): void {
+        const pitches: number[] = onlyPitch == null ? note.pitches : [onlyPitch];
+        this._spawnNoteFlash(note, pitches, "none", "#ef5b70", true);
+    }
+
+    private _spawnNoteFlash(note: Note, pitches: readonly number[], fill: string, stroke: string, deleting: boolean): void {
         if (!this._interactive || this._doc.song.getChannelIsMod(this._doc.channel)) return;
+        if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
 
         if (this._placementFxContainer.parentNode == this._svg) {
             this._svg.insertBefore(this._placementFxContainer, this._svgPreview);
         }
 
-        const deleteColor: string = "#ff3b5c";
         const slideOffset: number = note.noteType == NoteType.slide ? 0.18 : 0.0;
-        const pitches: number[] = onlyPitch == null ? note.pitches : [onlyPitch];
 
         for (const pitch of pitches) {
-            const group: SVGGElement = document.createElementNS("http://www.w3.org/2000/svg", "g");
-            group.setAttribute("pointer-events", "none");
-            group.style.setProperty("transform-box", "fill-box");
-            group.style.setProperty("transform-origin", "center");
-            group.style.setProperty("will-change", "transform, opacity");
-
-            const ghost: SVGPathElement = SVG.path();
-            ghost.setAttribute("fill", deleteColor);
-            ghost.setAttribute("fill-opacity", "0.30");
-            ghost.setAttribute("stroke", deleteColor);
-            ghost.setAttribute("stroke-width", "1.3");
-            ghost.setAttribute("stroke-opacity", "0.9");
-            ghost.setAttribute("stroke-linejoin", "round");
-            ghost.setAttribute("stroke-linecap", "round");
-            ghost.setAttribute("pointer-events", "none");
+            const flash: SVGPathElement = SVG.path();
+            flash.setAttribute("fill", fill);
+            flash.setAttribute("fill-opacity", deleting ? "0" : "0.34");
+            flash.setAttribute("stroke", stroke);
+            flash.setAttribute("stroke-width", deleting ? "1.5" : "1.1");
+            flash.setAttribute("stroke-opacity", deleting ? "0.9" : "0.75");
+            flash.setAttribute("stroke-linejoin", "round");
+            flash.setAttribute("stroke-linecap", "round");
+            flash.setAttribute("pointer-events", "none");
+            if (deleting) flash.setAttribute("stroke-dasharray", "3 2");
 
             this._drawNote(
-                ghost,
+                flash,
                 pitch + slideOffset,
                 note.start,
                 note.pins,
                 (this._pitchHeight - this._pitchBorder) / 2 + 1,
-                true,
+                !deleting,
                 this._octaveOffset,
             );
 
-            const outline: SVGPathElement = SVG.path();
-            outline.setAttribute("fill", "none");
-            outline.setAttribute("stroke", deleteColor);
-            outline.setAttribute("stroke-width", "2.1");
-            outline.setAttribute("stroke-opacity", "1");
-            outline.setAttribute("stroke-linejoin", "round");
-            outline.setAttribute("stroke-linecap", "round");
-            outline.setAttribute("pointer-events", "none");
-
-            this._drawNote(
-                outline,
-                pitch + slideOffset,
-                note.start,
-                note.pins,
-                (this._pitchHeight - this._pitchBorder) / 2 + 1,
-                false,
-                this._octaveOffset,
-            );
-
-            group.appendChild(ghost);
-            group.appendChild(outline);
-            this._placementFxContainer.appendChild(group);
+            this._placementFxContainer.appendChild(flash);
 
             while (this._placementFxContainer.childElementCount > 48) {
                 this._placementFxContainer.firstElementChild?.remove();
             }
 
-            group.style.opacity = "1";
-            group.style.transform = "scale(0.985)";
-
-            const duration: number = 520;
-            const startScale: number = 0.985;
-            const endScale: number = 1.15;
-
-            window.requestAnimationFrame(() => {
-                window.requestAnimationFrame(() => {
-                    const startedAt: number = performance.now();
-
-                    const animate = (now: number): void => {
-                        if (!group.isConnected) return;
-
-                        const progress: number = Math.max(0, Math.min(1, (now - startedAt) / duration));
-                        const eased: number = 1 - Math.pow(1 - progress, 3);
-
-                        group.style.opacity = "" + (1 - eased);
-                        group.style.transform = "scale(" + (startScale + (endScale - startScale) * eased) + ")";
-
-                        if (progress < 1) {
-                            window.requestAnimationFrame(animate);
-                        } else {
-                            group.remove();
-                        }
-                    };
-
-                    window.requestAnimationFrame(animate);
-                });
-            });
+            const animation: Animation = flash.animate(
+                deleting
+                    ? [{ opacity: 0.9, strokeDashoffset: "0" }, { opacity: 0, strokeDashoffset: "5" }]
+                    : [{ opacity: 0.72 }, { opacity: 0 }],
+                { duration: deleting ? 130 : 160, easing: "cubic-bezier(0.2, 0.7, 0.2, 1)" },
+            );
+            animation.finished.then(() => flash.remove()).catch(() => flash.remove());
         }
     }
 
@@ -799,15 +667,9 @@ export class PatternEditor {
         if (this._independentNotesEnabled()) {
             this._spawnNoteDeletionFx(targetNote);
 
-            const targetPitch: number = targetNote.pitches[0];
-
             for (let i: number = pattern.notes.length - 1; i >= 0; i--) {
                 const note: Note = pattern.notes[i];
-                const exactDuplicate: boolean =
-                    note.noteType == targetNote.noteType
-                    && note.pitches[0] == targetPitch
-                    && note.start == targetNote.start
-                    && note.end == targetNote.end;
+                const exactDuplicate: boolean = this._independentNotesAreExactDuplicates(note, targetNote);
 
                 if (note == targetNote || exactDuplicate) {
                     sequence.append(new ChangeNoteAdded(this._doc, pattern, note, i, true));
@@ -929,8 +791,12 @@ export class PatternEditor {
         const endX: number = note.end * this._partWidth;
         const edgePixels: number = Math.max(5, Math.min(9, this._partWidth * 0.18));
 
-        if (Math.abs(this._mouseX - startX) <= edgePixels) return "start";
-        if (Math.abs(this._mouseX - endX) <= edgePixels) return "end";
+        const startDistance: number = Math.abs(this._mouseX - startX);
+        const endDistance: number = Math.abs(this._mouseX - endX);
+        // Short notes can fit inside both hit zones. Pick the closer edge.
+        if (Math.min(startDistance, endDistance) <= edgePixels) {
+            return startDistance < endDistance ? "start" : "end";
+        }
         return null;
     }
 
@@ -2704,7 +2570,7 @@ export class PatternEditor {
                     const pitchRatio: number = this._doc.song.getChannelIsNoise(this._doc.channel) ? 1 : 12 / notesInScale;
                     const draggedParts: number = Math.round((this._mouseX - this._mouseXStart) / (this._partWidth * minDivision)) * minDivision;
                     const draggedTranspose: number = Math.round((this._mouseYStart - this._mouseY) / (this._pitchHeight * pitchRatio));
-                    sequence.append(new ChangeDragSelectedNotes(this._doc, this._doc.channel, pattern, draggedParts, draggedTranspose));
+                    sequence.append(new ChangeDragSelectedNotes(this._doc, this._doc.channel, pattern, draggedParts, draggedTranspose, this._independentNotesEnabled()));
                 }
 
             } else if (this._shiftHeld && this._dragConfirmed) {
@@ -2918,12 +2784,40 @@ export class PatternEditor {
                         this._dragSize = this._cursor.curNote.pins[this._cursor.nearPinIndex].size;
                         this._dragVisible = true;
 
-                        if (!this._independentNotesEnabled()) {
-                            sequence.append(new ChangeNoteTruncate(this._doc, this._pattern, start, end, this._cursor.curNote));
-                        }
+                        const firstPinIndex: number = 0;
+                        const lastPinIndex: number = this._cursor.curNote.pins.length - 1;
+                        const resizingStart: boolean = this._cursor.nearPinIndex == firstPinIndex;
+                        const resizingEnd: boolean = this._cursor.nearPinIndex == lastPinIndex;
 
-                        sequence.append(new ChangePinTime(this._doc, this._cursor.curNote, this._cursor.nearPinIndex, shiftedTime, continuesLastPattern));
-                        this._copyPins(this._cursor.curNote);
+                        const proposedStart: number = resizingStart
+                            ? shiftedTime
+                            : this._cursor.curNote.start;
+                        const proposedEnd: number = resizingEnd
+                            ? shiftedTime
+                            : this._cursor.curNote.end;
+
+                        const independentCollision: boolean =
+                            this._independentNotesEnabled()
+                            && (resizingStart || resizingEnd)
+                            && proposedEnd > proposedStart
+                            && this._independentNoteHasCollision(
+                                this._pattern,
+                                this._cursor.curNote,
+                                proposedStart,
+                                proposedEnd,
+                                this._cursor.curNote.pitches,
+                            );
+
+                        if (independentCollision) {
+                            this._dragVisible = false;
+                        } else {
+                            if (!this._independentNotesEnabled()) {
+                                sequence.append(new ChangeNoteTruncate(this._doc, this._pattern, start, end, this._cursor.curNote));
+                            }
+
+                            sequence.append(new ChangePinTime(this._doc, this._cursor.curNote, this._cursor.nearPinIndex, shiftedTime, continuesLastPattern));
+                            this._copyPins(this._cursor.curNote);
+                        }
                     }
                 } else if (this._cursor.pitchIndex == -1 || this._doc.song.getChannelIsMod(this._doc.channel)) {
 
