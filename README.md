@@ -1,6 +1,6 @@
 # UserBox
 
-[UserBox's Main release](https://thatoneuser22.github.io/Userbox/)
+[UserBox's Main release](https://thatoneuser22.github.io/UserBox/)
 
 
 UserBox is an online tool for sketching and sharing instrumental music.
