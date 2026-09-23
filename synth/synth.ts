@@ -675,7 +675,7 @@ export class Pattern {
             }
         }
 
-        if (patternObject["notes"] && patternObject["notes"].length > 0) {
+        if (Array.isArray(patternObject["notes"]) && patternObject["notes"].length > 0) {
             const maxNoteCount: number = Math.min(
                 song.beatsPerBar * Config.partsPerBeat * (isModChannel ? Config.modCount : Config.maxChordSize),
                 patternObject["notes"].length >>> 0,
@@ -687,12 +687,16 @@ export class Pattern {
                 if (j >= maxNoteCount) break;
 
                 const noteObject = patternObject["notes"][j];
-                if (!noteObject || !noteObject["pitches"] || !(noteObject["pitches"].length >= 1) || !noteObject["points"] || !(noteObject["points"].length >= 2)) {
+                if (!noteObject || !Array.isArray(noteObject["pitches"]) || noteObject["pitches"].length < 1 || !Array.isArray(noteObject["points"]) || noteObject["points"].length < 2) {
                     continue;
                 }
 
                 const note: Note = new Note(0, 0, 0, 0);
                 const importedNoteType: any = noteObject["noteType"];
+                if (importedNoteType != undefined && importedNoteType != "normal"
+                    && importedNoteType != NoteType.normal && importedNoteType != "slide"
+                    && importedNoteType != NoteType.slide && importedNoteType != "portamento"
+                    && importedNoteType != "porta" && importedNoteType != NoteType.portamento) continue;
                 note.noteType = importedNoteType == "slide" || importedNoteType == NoteType.slide
                     ? NoteType.slide
                     : importedNoteType == "portamento" || importedNoteType == "porta" || importedNoteType == NoteType.portamento
@@ -701,13 +705,18 @@ export class Pattern {
                 note.pitches = [];
                 note.pins = [];
 
+                let invalidNote: boolean = false;
                 for (let k: number = 0; k < noteObject["pitches"].length; k++) {
-                    const pitch: number = noteObject["pitches"][k] | 0;
+                    if (!Number.isSafeInteger(noteObject["pitches"][k])) {
+                        invalidNote = true;
+                        break;
+                    }
+                    const pitch: number = noteObject["pitches"][k];
                     if (note.pitches.indexOf(pitch) != -1) continue;
                     note.pitches.push(pitch);
                     if (note.pitches.length >= Config.maxChordSize) break;
                 }
-                if (note.pitches.length < 1) continue;
+                if (invalidNote || note.pitches.length < 1) continue;
 
                 //let noteClock: number = tickClock;
                 let startInterval: number = 0;
@@ -715,10 +724,21 @@ export class Pattern {
                 let mod: number = Math.max(0, Config.modCount - note.pitches[0] - 1);
                 for (let k: number = 0; k < noteObject["points"].length; k++) {
                     const pointObject: any = noteObject["points"][k];
-                    if (pointObject == undefined || pointObject["tick"] == undefined) continue;
+                    if (pointObject == undefined || !Number.isFinite(pointObject["tick"])
+                        || (pointObject["pitchBend"] != undefined && !Number.isSafeInteger(pointObject["pitchBend"]))
+                        || (pointObject["volume"] != undefined && !Number.isFinite(pointObject["volume"]))) {
+                        invalidNote = true;
+                        break;
+                    }
                     const interval: number = (pointObject["pitchBend"] == undefined) ? 0 : (pointObject["pitchBend"] | 0);
 
                     const time: number = Math.round((+pointObject["tick"]) * Config.partsPerBeat / importedPartsPerBeat);
+                    if (!Number.isSafeInteger(time) || time < 0
+                        || time > song.beatsPerBar * Config.partsPerBeat
+                        || (note.pins.length > 0 && time <= note.start + note.pins[note.pins.length - 1].time)) {
+                        invalidNote = true;
+                        break;
+                    }
 
                     // Only one instrument per pattern allowed in mod channels.
                     let volumeCap: number = song.getVolumeCapForSetting(isModChannel, instrument.modulators[mod], instrument.modFilterTypes[mod]);
@@ -735,7 +755,6 @@ export class Pattern {
                         size = ((pointObject["forMod"] | 0) > 0) ? Math.round(pointObject["volume"] | 0) : Math.max(0, Math.min(volumeCap, Math.round((pointObject["volume"] | 0) * volumeCap / 100)));
                     }
 
-                    if (time > song.beatsPerBar * Config.partsPerBeat) continue;
                     if (note.pins.length == 0) {
                         //if (time < noteClock) continue;
                         note.start = time;
@@ -747,9 +766,10 @@ export class Pattern {
 
                     note.pins.push(makeNotePin(interval - startInterval, time - note.start, size));
                 }
-                if (note.pins.length < 2) continue;
+                if (invalidNote || note.pins.length < 2) continue;
 
                 note.end = note.pins[note.pins.length - 1].time + note.start;
+                if (note.end <= note.start || note.end > song.beatsPerBar * Config.partsPerBeat) continue;
 
                 const maxPitch: number = isNoiseChannel ? Config.drumCount - 1 : Config.maxPitch;
                 let lowestPitch: number = maxPitch;
@@ -4390,6 +4410,8 @@ export class Song {
                 for (let i: number = 0; i < independentDataLength; i++) {
                     buffer.push(encodedIndependentData.charCodeAt(i));
                 }
+            } else {
+                throw new Error("Independent Notes data exceeds the URL song format limit. Export as JSON instead; no notes were discarded.");
             }
         }
 
@@ -4639,6 +4661,7 @@ export class Song {
         let command: number;
         let useSlowerArpSpeed: boolean = false;
         let useFastTwoNoteArp: boolean = false;
+        const independentNoteCounts: Map<Pattern, number> = new Map<Pattern, number>();
         while (charIndex < compressed.length) switch (command = compressed.charCodeAt(charIndex++)) {
             case SongTagCode.songDetails: {
                 // Length of song name string
@@ -6300,8 +6323,9 @@ export class Song {
                         for (const entry of patternData) {
                             if (!Array.isArray(entry) || entry.length < 3) continue;
 
-                            const channelIndex: number = entry[0] | 0;
-                            const patternIndex: number = entry[1] | 0;
+                            if (!Number.isInteger(entry[0]) || !Number.isInteger(entry[1])) continue;
+                            const channelIndex: number = entry[0];
+                            const patternIndex: number = entry[1];
                             const notesData: any = entry[2];
 
                             if (
@@ -6316,28 +6340,37 @@ export class Song {
 
                             const channel: Channel = this.channels[channelIndex];
                             const pattern: Pattern = channel.patterns[patternIndex];
+                            independentNoteCounts.set(pattern, notesData.length);
                             const isModChannel: boolean = this.getChannelIsMod(channelIndex);
                             const barEnd: number = this.beatsPerBar * Config.partsPerBeat + (+isModChannel);
                             const restoredNotes: Note[] = [];
+                            const restoredNoteKeys: Set<string> = new Set<string>();
 
                             for (const rawNote of notesData) {
                                 if (!Array.isArray(rawNote) || rawNote.length < 6) continue;
 
-                                const start: number = rawNote[0] | 0;
-                                const end: number = rawNote[1] | 0;
+                                const start: number = rawNote[0];
+                                const end: number = rawNote[1];
                                 const continuesLastPattern: boolean = rawNote[2] == 1;
-                                const noteType: number = rawNote[3] | 0;
+                                const noteType: number = rawNote[3];
                                 const pitches: any = rawNote[4];
                                 const pins: any = rawNote[5];
 
                                 if (
-                                    start < 0
+                                    !Number.isInteger(start)
+                                    || !Number.isInteger(end)
+                                    || (rawNote[2] != 0 && rawNote[2] != 1)
+                                    || !Number.isInteger(noteType)
+                                    || noteType < NoteType.normal
+                                    || noteType > NoteType.portamento
+                                    || start < 0
                                     || end <= start
                                     || end > barEnd
                                     || !Array.isArray(pitches)
                                     || pitches.length < 1
                                     || !Array.isArray(pins)
                                     || pins.length < 2
+                                    || pins.length > barEnd + 1
                                 ) {
                                     continue;
                                 }
@@ -6349,10 +6382,10 @@ export class Song {
                                     : Config.maxPitch;
 
                                 for (const rawPitch of pitches) {
-                                    const pitch: number = rawPitch | 0;
+                                    const pitch: number = rawPitch;
 
                                     if (
-                                        !Number.isFinite(rawPitch)
+                                        !Number.isInteger(rawPitch)
                                         || pitch < 0
                                         || pitch > maxPitch
                                     ) {
@@ -6382,14 +6415,17 @@ export class Song {
                                         break;
                                     }
 
-                                    const interval: number = rawPin[0] | 0;
-                                    const time: number = rawPin[1] | 0;
-                                    const size: number = rawPin[2] | 0;
+                                    const interval: number = rawPin[0];
+                                    const time: number = rawPin[1];
+                                    const size: number = rawPin[2];
 
                                     if (
-                                        !Number.isFinite(rawPin[0])
-                                        || !Number.isFinite(rawPin[1])
-                                        || !Number.isFinite(rawPin[2])
+                                        !Number.isInteger(interval)
+                                        || !Number.isInteger(time)
+                                        || !Number.isInteger(size)
+                                        || size < 0
+                                        || size > Config.noteSizeMax
+                                        || cleanPitches.some(pitch => pitch + interval < 0 || pitch + interval > maxPitch)
                                         || time < 0
                                         || time > end - start
                                         || time <= previousTime
@@ -6424,6 +6460,12 @@ export class Song {
                                             ? NoteType.portamento
                                             : NoteType.normal;
 
+                                const noteKey: string = JSON.stringify([
+                                    start, end, note.continuesLastPattern, note.noteType,
+                                    cleanPitches.slice().sort((a, b) => a - b), cleanPins,
+                                ]);
+                                if (restoredNoteKeys.has(noteKey)) continue;
+                                restoredNoteKeys.add(noteKey);
                                 restoredNotes.push(note);
                             }
 
@@ -6437,7 +6479,7 @@ export class Song {
                                 return a.end - b.end;
                             });
 
-                            pattern.notes = restoredNotes;
+                            if (restoredNotes.length > 0 || notesData.length == 0) pattern.notes = restoredNotes;
                         }
                     }
                 } catch (error) {
@@ -6451,9 +6493,17 @@ export class Song {
                 // cannot corrupt the compressed note timing/pitch bitstream.
                 for (const channel of this.channels) {
                     for (const pattern of channel.patterns) {
-                        for (const note of pattern.notes) {
+                        const encodedCount: number = independentNoteCounts.get(pattern) ?? pattern.notes.length;
+                        for (let noteIndex: number = 0; noteIndex < encodedCount; noteIndex++) {
                             const encodedType: number = base64CharCodeToInt[compressed.charCodeAt(charIndex++)];
-                            note.noteType = validateRange(NoteType.normal, NoteType.portamento + 1, encodedType);
+                            if (encodedType == undefined || encodedType < NoteType.normal || encodedType > NoteType.portamento) {
+                                // A damaged extension should not prevent the rest of the song from loading.
+                                charIndex = compressed.length;
+                                break;
+                            }
+                            if (!independentNoteCounts.has(pattern) && noteIndex < pattern.notes.length) {
+                                pattern.notes[noteIndex].noteType = encodedType;
+                            }
                         }
                     }
                 }
@@ -8449,6 +8499,7 @@ class Tone {
     public soundFontZone: SoundFontZone | null = null;
     public soundFontSamplesHeld: number = 0;
     public note: Note | null = null;
+    public independentArpeggio: boolean = false;
     public prevNote: Note | null = null;
     public nextNote: Note | null = null;
     public prevNotePitchIndex: number = 0;
@@ -11156,6 +11207,7 @@ export class Synth {
         if (this.tonePool.count() > 0) {
             const tone: Tone = this.tonePool.popBack();
             tone.freshlyAllocated = true;
+            tone.independentArpeggio = false;
             return tone;
         }
         return new Tone();
@@ -11624,6 +11676,10 @@ export class Synth {
                         if (candidate.end != partsPerBar) continue;
                     } else if (candidate.start >= target.start) {
                         continue;
+                    } else if (candidate.end > target.start && target.noteType != NoteType.portamento) {
+                        // A sustained independent voice is not automatically the
+                        // previous voice for an unrelated note starting above it.
+                        continue;
                     }
 
                     const gap: number = targetAtBarStart
@@ -11748,12 +11804,12 @@ export class Synth {
                         return previous;
                     };
 
-                    const getIndependentTone = (activeNote: Note, pitch: number): Tone => {
+                    const getIndependentTone = (activeNote: Note, pitch: number, arpeggio: boolean = false): Tone => {
                         let matchIndex: number = -1;
 
                         for (let i: number = toneCount; i < toneList.count(); i++) {
                             const candidate: Tone = toneList.get(i);
-                            if (candidate.note == activeNote && candidate.pitches[0] == pitch) {
+                            if (arpeggio ? candidate.independentArpeggio : !candidate.independentArpeggio && candidate.note == activeNote && candidate.pitches[0] == pitch) {
                                 matchIndex = i;
                                 break;
                             }
@@ -11774,6 +11830,7 @@ export class Synth {
                         // a chance to claim them. A newly inserted note must not
                         // steal a sustained voice that is processed later.
                         const tone: Tone = this.newTone();
+                        tone.independentArpeggio = arpeggio;
                         if (toneCount < toneList.count()) {
                             const displaced: Tone = toneList.get(toneCount);
                             toneList.set(toneCount, tone);
@@ -11791,6 +11848,7 @@ export class Synth {
                     // The pattern data remains untouched and every lane stays editable.
                     if (chord.arpeggiates) {
                         const arpeggioPitches: number[] = [];
+                        const pitchOwners: Map<number, Note> = new Map<number, Note>();
 
                         for (const activeNote of activeNotes) {
                             for (const pitch of activeNote.pitches) {
@@ -11801,20 +11859,32 @@ export class Synth {
                                     continue;
                                 }
 
-                                if (arpeggioPitches.indexOf(pitch) == -1) {
-                                    arpeggioPitches.push(pitch);
-                                }
+                                const previousOwner: Note | undefined = pitchOwners.get(pitch);
+                                if (previousOwner == undefined || activeNote.start >= previousOwner.start) pitchOwners.set(pitch, activeNote);
                             }
                         }
 
+                        arpeggioPitches.push(...pitchOwners.keys());
                         arpeggioPitches.sort((a: number, b: number) => a - b);
 
                         if (arpeggioPitches.length > 0) {
-                            const referenceNote: Note = activeNotes[0];
-                            const tone: Tone = getIndependentTone(referenceNote, arpeggioPitches[0]);
-                            const atNoteStart: boolean = activeNotes.some((activeNote: Note) =>
-                                Config.ticksPerPart * activeNote.start == currentTick
+                            const tone: Tone = getIndependentTone(activeNotes[0], arpeggioPitches[0], true);
+                            const oldNote: Note | null = tone.note;
+                            const arpeggioIndex: number = getArpeggioPitchIndex(
+                                arpeggioPitches.length,
+                                instrument.fastTwoNoteArp,
+                                Math.floor(instrumentState.arpTime / Config.ticksPerArpeggio),
                             );
+                            const owner: Note = pitchOwners.get(arpeggioPitches[arpeggioIndex])!;
+                            const previousPattern: Pattern | null = this.prevBar == null ? null : song.getPattern(channelIndex, this.prevBar);
+                            const previousOwner: Note | null = owner.start == 0 && previousPattern != null
+                                ? (oldNote != null && oldNote.end == Config.partsPerBeat * song.beatsPerBar
+                                    ? oldNote
+                                    : getClosestBoundaryNote(previousPattern, false, arpeggioPitches[arpeggioIndex]))
+                                : getIndependentPreviousNote(owner);
+                            const continueAtStart: boolean = owner.start == 0 && owner.continuesLastPattern && previousOwner != null;
+                            const atNoteStart: boolean = Config.ticksPerPart * owner.start == currentTick
+                                && (tone.freshlyAllocated || (owner.start == 0 && !continueAtStart && oldNote != owner));
 
                             toneCount++;
 
@@ -11825,28 +11895,36 @@ export class Synth {
                             tone.pitchCount = arpeggioPitches.length;
                             tone.chordSize = 1;
                             tone.instrumentIndex = instrumentIndex;
-                            tone.note = referenceNote;
-                            tone.noteStartPart = Math.min(...activeNotes.map((activeNote: Note) => activeNote.start));
-                            tone.noteEndPart = Math.max(...activeNotes.map((activeNote: Note) => activeNote.end));
-                            tone.prevNote = null;
+                            tone.note = owner;
+                            tone.noteStartPart = owner.start;
+                            tone.noteEndPart = owner.end;
+                            tone.prevNote = previousOwner;
                             tone.nextNote = null;
                             tone.prevNotePitchIndex = 0;
                             tone.nextNotePitchIndex = 0;
                             tone.atNoteStart = atNoteStart && !tone.continuedSfxTail;
                             tone.continuedSfxTail = false;
                             tone.passedEndOfNote = false;
-                            tone.forceContinueAtStart = false;
+                            tone.forceContinueAtStart = continueAtStart;
                             tone.forceContinueAtEnd = false;
 
                             // This is intentionally the normal chord path so the existing
                             // 1/2/3 arpeggio ordering and timing are reused unchanged.
                             this.computeTone(song, channelIndex, samplesPerTick, tone, false, false);
                         }
-                    } else for (const activeNote of activeNotes) {
-                        let filteredPitches: number[] = activeNote.pitches;
+                    } else {
+                        const activePitchOwners: Map<number, Note> = new Map<number, Note>();
+                        for (const activeNote of activeNotes) {
+                            for (const pitch of activeNote.pitches) {
+                                const previousOwner: Note | undefined = activePitchOwners.get(pitch);
+                                if (previousOwner == undefined || activeNote.start >= previousOwner.start) activePitchOwners.set(pitch, activeNote);
+                            }
+                        }
+                    for (const activeNote of activeNotes) {
+                        let filteredPitches: number[] = activeNote.pitches.filter(pitch => activePitchOwners.get(pitch) == activeNote);
 
                         if (effectsIncludeNoteRange(instrument.effects)) {
-                            filteredPitches = activeNote.pitches.filter(pitch => pitch >= instrument.lowerNoteLimit && pitch <= instrument.upperNoteLimit);
+                            filteredPitches = filteredPitches.filter(pitch => pitch >= instrument.lowerNoteLimit && pitch <= instrument.upperNoteLimit);
                         }
 
                         if (filteredPitches.length <= 0) continue;
@@ -11885,17 +11963,34 @@ export class Synth {
                         } else {
                             for (let pitchIndex: number = 0; pitchIndex < filteredPitches.length; pitchIndex++) {
                                 const pitch: number = filteredPitches[pitchIndex];
+                                let strumOffsetParts: number = 0;
+                                let chordSize: number = filteredPitches.length;
+                                if (chord.strumParts > 0 && pattern != null) {
+                                    const groupPitches: number[] = [];
+                                    for (const groupNote of pattern.notes) {
+                                        if (groupNote.start != activeNote.start || groupNote.noteType == NoteType.slide) continue;
+                                        for (const groupPitch of groupNote.pitches) {
+                                            if (effectsIncludeNoteRange(instrument.effects) && (groupPitch < instrument.lowerNoteLimit || groupPitch > instrument.upperNoteLimit)) continue;
+                                            if (groupPitches.indexOf(groupPitch) == -1) groupPitches.push(groupPitch);
+                                        }
+                                    }
+                                    groupPitches.sort((a: number, b: number) => a - b);
+                                    chordSize = groupPitches.length;
+                                    strumOffsetParts = Math.max(0, groupPitches.indexOf(pitch)) * instrument.strumParts;
+                                }
+                                const noteStartPart: number = activeNote.start + strumOffsetParts;
+                                if (noteStartPart >= activeNote.end || currentPart < noteStartPart) continue;
                                 const tone: Tone = getIndependentTone(activeNote, pitch);
-                                const atNoteStart: boolean = Config.ticksPerPart * activeNote.start == currentTick;
+                                const atNoteStart: boolean = Config.ticksPerPart * noteStartPart == currentTick;
 
                                 toneCount++;
 
                                 tone.pitches[0] = pitch;
                                 tone.pitchCount = 1;
-                                tone.chordSize = filteredPitches.length;
+                                tone.chordSize = chordSize;
                                 tone.instrumentIndex = instrumentIndex;
                                 tone.note = activeNote;
-                                tone.noteStartPart = activeNote.start;
+                                tone.noteStartPart = noteStartPart;
                                 tone.noteEndPart = activeNote.end;
                                 tone.prevNote = getIndependentPreviousNote(activeNote);
                                 tone.nextNote = null;
@@ -11914,6 +12009,7 @@ export class Synth {
                                 this.computeTone(song, channelIndex, samplesPerTick, tone, false, false, true);
                             }
                         }
+                    }
                     }
                 } else if ((note != null) && instrumentIsActiveInPattern) {
                     let prevNoteForThisInstrument: Note | null = prevNote;
@@ -12314,7 +12410,7 @@ export class Synth {
                     // Each slide controller belongs to the closest active voice.
                     // Keep searching when this controller belongs to another
                     // Independent Note; an earlier controller may target this one.
-                    if (referenceNote == null || (independentNote && referenceNote != tone.note)) continue;
+                    if (referenceNote == null || ((independentNote || tone.independentArpeggio) && referenceNote != tone.note)) continue;
 
                     if (latestSlide == null || slideCandidate.start >= latestSlide.start) {
                         latestSlide = slideCandidate;

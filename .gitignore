@@ -2,6 +2,7 @@
 .DS_Store
 .vs
 /node_modules
+**/node_modules/
 offline/node_modules
 /website/**/beepbox*.js
 /website/**/beepbox*.js.map
@@ -33,3 +34,8 @@ offline/node_modules
 /offline/player/*
 !/offline/player/index.html
 /offline/UltraBox Offline*
+node_modules/
+
+node_modules/
+
+node_modules/

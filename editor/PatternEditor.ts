@@ -2,6 +2,7 @@
 
 import { getLocalStorageItem, Chord, Transition, Config, effectsIncludeNoteRange} from "../synth/SynthConfig";
 import { NoteType, NotePin, Note, makeNotePin, FilterSettings, Channel, Pattern, Instrument, FilterControlPoint } from "../synth/synth";
+import { getPianoRollSnapDivision } from "./PianoRollSnap";
 import { ColorConfig } from "./ColorConfig";
 import { SongDocument } from "./SongDocument";
 import { Slider } from "./HTMLWrapper";
@@ -305,6 +306,8 @@ export class PatternEditor {
     private _placedNoteThisPress: boolean = false;
 
     private _movingIndependentNote: boolean = false;
+    private _requestedSnapValue: string = "line";
+    private _lastSnapRhythm: number = -1;
     private _independentMoveNote: Note | null = null;
     private _independentMoveStart: number = 0;
     private _independentMoveEnd: number = 0;
@@ -370,17 +373,6 @@ export class PatternEditor {
         const snapOptions: { value: string, label: string }[] = [
             { value: "none", label: "(none)" },
             { value: "line", label: "Line" },
-            { value: "step16", label: "1/6 Step" },
-            { value: "step14", label: "1/4 Step" },
-            { value: "step13", label: "1/3 Step" },
-            { value: "step12", label: "1/2 Step" },
-            { value: "step", label: "Step" },
-            { value: "beat16", label: "1/6 Beat" },
-            { value: "beat14", label: "1/4 Beat" },
-            { value: "beat13", label: "1/3 Beat" },
-            { value: "beat12", label: "1/2 Beat" },
-            { value: "beat", label: "Beat" },
-            { value: "bar", label: "Bar" },
         ];
 
         for (const snap of snapOptions) {
@@ -388,7 +380,8 @@ export class PatternEditor {
         }
 
         const savedSnap: string = getLocalStorageItem("pianoRollSnap", "line");
-        this._snapSelect.value = snapOptions.some(option => option.value == savedSnap) ? savedSnap : "line";
+        this._requestedSnapValue = snapOptions.some(option => option.value == savedSnap) ? savedSnap : "line";
+        this._refreshSnapOptions();
 
         this._noteTypeSelect.appendChild(new Option("Normal", "" + NoteType.normal));
         this._noteTypeSelect.appendChild(new Option("Slide", "" + NoteType.slide));
@@ -398,6 +391,7 @@ export class PatternEditor {
         this._noteTypeSelect.value = "" + Math.max(NoteType.normal, Math.min(NoteType.portamento, isNaN(savedNoteType) ? NoteType.normal : savedNoteType));
 
         this._snapSelect.addEventListener("change", () => {
+            this._requestedSnapValue = this._snapSelect.value;
             localStorage.setItem("pianoRollSnap", this._snapSelect.value);
             this._updateCursorStatus();
             this._updatePreview();
@@ -489,9 +483,17 @@ export class PatternEditor {
 	}
 
     private _independentNotesEnabled(): boolean {
-        return (this._independentNotesInput.checked || this._getNoteEntryType() != NoteType.normal)
+        return this._independentNotesInput.checked
             && !this._doc.song.getChannelIsNoise(this._doc.channel)
             && !this._doc.song.getChannelIsMod(this._doc.channel);
+    }
+
+    private _slideControllerMode(): boolean {
+        return this._getNoteEntryType() == NoteType.slide;
+    }
+
+    private _useIndependentNoteEditing(): boolean {
+        return this._independentNotesEnabled() || this._slideControllerMode();
     }
 
     private _useRoundedPianoNotes(): boolean {
@@ -544,7 +546,7 @@ export class PatternEditor {
         pitches: number[],
         noteType: NoteType,
     ): boolean {
-        if (!this._independentNotesEnabled()) return true;
+        if (!this._independentNotesEnabled() && noteType != NoteType.slide) return true;
         const barEnd: number = this._doc.song.beatsPerBar * Config.partsPerBeat;
         if (
             !Number.isFinite(start)
@@ -566,31 +568,6 @@ export class PatternEditor {
             if (this._notesConflict(existingNote, movingNote, start, end, pitches, noteType)) {
                 return false;
             }
-        }
-
-        return true;
-    }
-
-    private _independentNotesAreExactDuplicates(a: Note, b: Note): boolean {
-        const aType: NoteType = a.noteType == undefined ? NoteType.normal : a.noteType;
-        const bType: NoteType = b.noteType == undefined ? NoteType.normal : b.noteType;
-
-        if (aType != bType || a.start != b.start || a.end != b.end) return false;
-        if (a.pitches.length != b.pitches.length || a.pins.length != b.pins.length) return false;
-
-        // Chord pitch order is not musically significant. Compare it as a set so
-        // imported duplicates with a different pitch order are still recognized,
-        // without accidentally deleting another chord that merely shares its root.
-        const aPitches: number[] = a.pitches.concat().sort((x: number, y: number) => x - y);
-        const bPitches: number[] = b.pitches.concat().sort((x: number, y: number) => x - y);
-        for (let i: number = 0; i < aPitches.length; i++) {
-            if (aPitches[i] != bPitches[i]) return false;
-        }
-
-        for (let i: number = 0; i < a.pins.length; i++) {
-            const aPin: NotePin = a.pins[i];
-            const bPin: NotePin = b.pins[i];
-            if (aPin.interval != bPin.interval || aPin.time != bPin.time || aPin.size != bPin.size) return false;
         }
 
         return true;
@@ -664,17 +641,9 @@ export class PatternEditor {
         const sequence: ChangeSequence = new ChangeSequence();
         sequence.append(new ChangePatternSelection(this._doc, 0, 0));
 
-        if (this._independentNotesEnabled()) {
+        if (this._useIndependentNoteEditing()) {
             this._spawnNoteDeletionFx(targetNote);
-
-            for (let i: number = pattern.notes.length - 1; i >= 0; i--) {
-                const note: Note = pattern.notes[i];
-                const exactDuplicate: boolean = this._independentNotesAreExactDuplicates(note, targetNote);
-
-                if (note == targetNote || exactDuplicate) {
-                    sequence.append(new ChangeNoteAdded(this._doc, pattern, note, i, true));
-                }
-            }
+            sequence.append(new ChangeNoteAdded(this._doc, pattern, targetNote, this._cursor.curIndex, true));
         } else {
             const pitchIndex: number = targetNote.pitches.indexOf(this._cursor.pitch);
 
@@ -863,27 +832,26 @@ export class PatternEditor {
         return Config.partsPerBeat;
     }
 
-    private _getSnapDivision(): number {
-        const beat: number = Config.partsPerBeat;
-        const line: number = Config.partsPerBeat / Config.rhythms[this._doc.song.rhythm].stepsPerBeat;
+    private _getSnapDivisionForValue(value: string): number | null {
+        return getPianoRollSnapDivision(value, Config.partsPerBeat, Config.rhythms[this._doc.song.rhythm].stepsPerBeat, this._doc.song.beatsPerBar);
+    }
 
-        switch (this._snapSelect.value) {
-            case "none": return 1;
-            case "step16": return Math.max(1, Math.round(beat / 24));
-            case "step14": return Math.max(1, Math.round(beat / 16));
-            case "step13": return Math.max(1, Math.round(beat / 12));
-            case "step12": return Math.max(1, Math.round(beat / 8));
-            case "step": return Math.max(1, Math.round(beat / 4));
-            case "beat16": return Math.max(1, Math.round(beat / 6));
-            case "beat14": return Math.max(1, Math.round(beat / 4));
-            case "beat13": return Math.max(1, Math.round(beat / 3));
-            case "beat12": return Math.max(1, Math.round(beat / 2));
-            case "beat": return beat;
-            case "bar": return beat * this._doc.song.beatsPerBar;
-            case "line":
-            default:
-                return Math.max(1, Math.round(line));
+    private _refreshSnapOptions(): void {
+        if (this._lastSnapRhythm == this._doc.song.rhythm) return;
+        this._lastSnapRhythm = this._doc.song.rhythm;
+        const availableDivisions: Set<number> = new Set<number>([Config.partsPerBeat / Config.rhythms[this._doc.song.rhythm].stepsPerBeat]);
+        for (const option of Array.from(this._snapSelect.options)) {
+            const division: number | null = this._getSnapDivisionForValue(option.value);
+            option.disabled = option.value != "line" && option.value != "none" && (division == null || availableDivisions.has(division));
+            option.title = option.disabled ? "This subdivision is unavailable at the current rhythm/resolution." : "";
+            if (division != null) availableDivisions.add(division);
         }
+        const requestedOption: HTMLOptionElement | undefined = Array.from(this._snapSelect.options).find(option => option.value == this._requestedSnapValue);
+        this._snapSelect.value = requestedOption != undefined && !requestedOption.disabled ? this._requestedSnapValue : "line";
+    }
+
+    private _getSnapDivision(): number {
+        return this._getSnapDivisionForValue(this._snapSelect.value) || 1;
     }
 
     private _getMinDivision(): number {
@@ -922,7 +890,7 @@ export class PatternEditor {
         let foundNote: boolean = false;
 
         if (this._pattern != null) {
-            if (this._independentNotesEnabled()) {
+            if (this._useIndependentNoteEditing()) {
                 const mousePitch: number = Math.floor(this._findMousePitch(this._mouseY));
                 let insertIndex: number = 0;
 
@@ -963,7 +931,9 @@ export class PatternEditor {
                     this._cursor.curIndex = insertIndex;
                 }
             } else {
-                for (const note of this._pattern.notes) {
+                for (let noteIndex: number = 0; noteIndex < this._pattern.notes.length; noteIndex++) {
+                    const note: Note = this._pattern.notes[noteIndex];
+                    if (note.noteType == NoteType.slide && !this._doc.song.getChannelIsMod(this._doc.channel)) continue;
                     if (note.end <= this._cursor.exactPart) {
                         if (this._doc.song.getChannelIsMod(this._doc.channel)) {
                             if (note.pitches[0] == Math.floor(this._findMousePitch(this._mouseY))) {
@@ -988,6 +958,8 @@ export class PatternEditor {
                         }
                         else {
                             this._cursor.curNote = note;
+                            this._cursor.curIndex = noteIndex;
+                            foundNote = true;
                         }
                     } else if (note.start > this._cursor.exactPart) {
                         if (this._doc.song.getChannelIsMod(this._doc.channel)) {
@@ -2378,7 +2350,7 @@ export class PatternEditor {
             this._independentMoveNote = null;
             this._placedNoteThisPress = false;
 
-            if (this._independentNotesEnabled() && this._cursor.curNote != null && !this._shiftHeld && !this._altHeld) {
+            if (this._useIndependentNoteEditing() && this._cursor.curNote != null && !this._shiftHeld && !this._altHeld) {
                 const edge = this._getIndependentEdgeMode(this._cursor.curNote);
 
                 if (edge == null) {
@@ -2510,7 +2482,7 @@ export class PatternEditor {
             const minDivision: number = this._getMinDivision();
             const currentPart: number = this._snapToMinDivision(this._mouseX / this._partWidth);
 
-            if (this._independentNotesEnabled() && this._movingIndependentNote && this._independentMoveNote != null) {
+            if (this._useIndependentNoteEditing() && this._movingIndependentNote && this._independentMoveNote != null) {
                 const pattern: Pattern | null = this._doc.getCurrentPattern(this._barOffset);
 
                 if (pattern != null) {
@@ -2709,9 +2681,9 @@ export class PatternEditor {
                         const pattern: Pattern | null = this._doc.getCurrentPattern(this._barOffset);
                         if (pattern == null) throw new Error();
                         // Independent Notes allows separate pitches to overlap in time.
-                        if (!this._independentNotesEnabled()) {
+                        if (!this._useIndependentNoteEditing()) {
                             // Using parameter skipNote to force proper "collision" checking vis-a-vis pitch for mod channels.
-                            sequence.append(new ChangeNoteTruncate(this._doc, pattern, start, end, new Note(this._cursor.pitch, 0, 0, 0)));
+                            sequence.append(new ChangeNoteTruncate(this._doc, pattern, start, end, new Note(this._cursor.pitch, 0, 0, 0), false, true));
                         }
 
                         let i: number;
@@ -2797,7 +2769,7 @@ export class PatternEditor {
                             : this._cursor.curNote.end;
 
                         const independentCollision: boolean =
-                            this._independentNotesEnabled()
+                            this._useIndependentNoteEditing()
                             && (resizingStart || resizingEnd)
                             && proposedEnd > proposedStart
                             && this._independentNoteHasCollision(
@@ -2811,8 +2783,8 @@ export class PatternEditor {
                         if (independentCollision) {
                             this._dragVisible = false;
                         } else {
-                            if (!this._independentNotesEnabled()) {
-                                sequence.append(new ChangeNoteTruncate(this._doc, this._pattern, start, end, this._cursor.curNote));
+                            if (!this._useIndependentNoteEditing()) {
+                                sequence.append(new ChangeNoteTruncate(this._doc, this._pattern, start, end, this._cursor.curNote, false, true));
                             }
 
                             sequence.append(new ChangePinTime(this._doc, this._cursor.curNote, this._cursor.nearPinIndex, shiftedTime, continuesLastPattern));
@@ -3007,23 +2979,10 @@ export class PatternEditor {
                 const sequence: ChangeSequence = new ChangeSequence();
                 sequence.append(new ChangePatternSelection(this._doc, 0, 0));
 
-                if (this._independentNotesEnabled()) {
+                if (this._useIndependentNoteEditing()) {
                     const targetNote: Note = this._cursor.curNote;
-                    const targetPitch: number = targetNote.pitches[0];
                     this._spawnNoteDeletionFx(targetNote);
-
-                    for (let i: number = this._pattern.notes.length - 1; i >= 0; i--) {
-                        const note: Note = this._pattern.notes[i];
-                        const exactDuplicate: boolean =
-                            note.noteType == targetNote.noteType
-                            && note.pitches[0] == targetPitch
-                            && note.start == targetNote.start
-                            && note.end == targetNote.end;
-
-                        if (note == targetNote || exactDuplicate) {
-                            sequence.append(new ChangeNoteAdded(this._doc, this._pattern, note, i, true));
-                        }
-                    }
+                    sequence.append(new ChangeNoteAdded(this._doc, this._pattern, targetNote, this._cursor.curIndex, true));
                 } else if (this._cursor.pitchIndex == -1) {
                     if (this._cursor.curNote.pitches.length == Config.maxChordSize) {
                         sequence.append(new ChangePitchAdded(this._doc, this._cursor.curNote, this._cursor.curNote.pitches[0], 0, true));
@@ -3418,6 +3377,7 @@ export class PatternEditor {
     }
 
     public render(): void {
+        this._refreshSnapOptions();
         const specialNotesAvailable: boolean =
             !this._doc.song.getChannelIsNoise(this._doc.channel)
             && !this._doc.song.getChannelIsMod(this._doc.channel);

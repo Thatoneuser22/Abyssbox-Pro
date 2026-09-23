@@ -21376,7 +21376,7 @@ export class ColorConfig {
                 z-index: 0;
                 pointer-events: none;
                 opacity: 0.20;
-                background-image: url("./image_assets/userbox_lilith_background.png");
+                background-image: url("./image_assets/userbox_pattern.png");
                 background-size: 920px calc(100vh + 100px);
                 background-repeat: no-repeat;
                 background-position: -46px -70px;

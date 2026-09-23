@@ -4362,12 +4362,14 @@ export class ChangeNoteLength extends ChangePins {
 }
 
 export class ChangeNoteTruncate extends ChangeSequence {
-    constructor(doc: SongDocument, pattern: Pattern, start: number, end: number, skipNote: Note | null = null, force: boolean = false) {
+    constructor(doc: SongDocument, pattern: Pattern, start: number, end: number, skipNote: Note | null = null, force: boolean = false, ignoreSlideControllers: boolean = false) {
         super();
         let i: number = 0;
         while (i < pattern.notes.length) {
             const note: Note = pattern.notes[i];
-            if (note == skipNote && skipNote != null) {
+            if (ignoreSlideControllers && note.noteType == NoteType.slide) {
+                i++;
+            } else if (note == skipNote && skipNote != null) {
                 i++;
             } else if (note.end <= start) {
                 i++;
