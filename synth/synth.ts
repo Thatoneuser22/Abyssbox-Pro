@@ -1258,15 +1258,6 @@ function getLegacyPatternNotes(pattern: Pattern, barEnd: number, isModChannel: b
     return legacyNotes;
 }
 
-function patternNeedsIndependentNoteData(pattern: Pattern, barEnd: number, isModChannel: boolean): boolean {
-    if (isModChannel) return false;
-
-    const fullNotes: Note[] = getSerializablePatternNotes(pattern, barEnd);
-    const legacyNotes: Note[] = getLegacyPatternNotes(pattern, barEnd, false);
-    return fullNotes.length != legacyNotes.length;
-}
-
-
 function writeSignedLongTail(bits: BitFieldWriter, value: number): void {
     bits.write(1, value < 0 ? 1 : 0);
     bits.writeLongTail(0, 3, Math.abs(value));
