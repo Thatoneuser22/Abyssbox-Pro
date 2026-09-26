@@ -675,7 +675,7 @@ export class Pattern {
             }
         }
 
-        if (Array.isArray(patternObject["notes"]) && patternObject["notes"].length > 0) {
+        if (patternObject["notes"] && patternObject["notes"].length > 0) {
             const maxNoteCount: number = Math.min(
                 song.beatsPerBar * Config.partsPerBeat * (isModChannel ? Config.modCount : Config.maxChordSize),
                 patternObject["notes"].length >>> 0,
@@ -687,16 +687,12 @@ export class Pattern {
                 if (j >= maxNoteCount) break;
 
                 const noteObject = patternObject["notes"][j];
-                if (!noteObject || !Array.isArray(noteObject["pitches"]) || noteObject["pitches"].length < 1 || !Array.isArray(noteObject["points"]) || noteObject["points"].length < 2) {
+                if (!noteObject || !noteObject["pitches"] || !(noteObject["pitches"].length >= 1) || !noteObject["points"] || !(noteObject["points"].length >= 2)) {
                     continue;
                 }
 
                 const note: Note = new Note(0, 0, 0, 0);
                 const importedNoteType: any = noteObject["noteType"];
-                if (importedNoteType != undefined && importedNoteType != "normal"
-                    && importedNoteType != NoteType.normal && importedNoteType != "slide"
-                    && importedNoteType != NoteType.slide && importedNoteType != "portamento"
-                    && importedNoteType != "porta" && importedNoteType != NoteType.portamento) continue;
                 note.noteType = importedNoteType == "slide" || importedNoteType == NoteType.slide
                     ? NoteType.slide
                     : importedNoteType == "portamento" || importedNoteType == "porta" || importedNoteType == NoteType.portamento
@@ -705,18 +701,13 @@ export class Pattern {
                 note.pitches = [];
                 note.pins = [];
 
-                let invalidNote: boolean = false;
                 for (let k: number = 0; k < noteObject["pitches"].length; k++) {
-                    if (!Number.isSafeInteger(noteObject["pitches"][k])) {
-                        invalidNote = true;
-                        break;
-                    }
-                    const pitch: number = noteObject["pitches"][k];
+                    const pitch: number = noteObject["pitches"][k] | 0;
                     if (note.pitches.indexOf(pitch) != -1) continue;
                     note.pitches.push(pitch);
                     if (note.pitches.length >= Config.maxChordSize) break;
                 }
-                if (invalidNote || note.pitches.length < 1) continue;
+                if (note.pitches.length < 1) continue;
 
                 //let noteClock: number = tickClock;
                 let startInterval: number = 0;
@@ -724,21 +715,10 @@ export class Pattern {
                 let mod: number = Math.max(0, Config.modCount - note.pitches[0] - 1);
                 for (let k: number = 0; k < noteObject["points"].length; k++) {
                     const pointObject: any = noteObject["points"][k];
-                    if (pointObject == undefined || !Number.isFinite(pointObject["tick"])
-                        || (pointObject["pitchBend"] != undefined && !Number.isSafeInteger(pointObject["pitchBend"]))
-                        || (pointObject["volume"] != undefined && !Number.isFinite(pointObject["volume"]))) {
-                        invalidNote = true;
-                        break;
-                    }
+                    if (pointObject == undefined || pointObject["tick"] == undefined) continue;
                     const interval: number = (pointObject["pitchBend"] == undefined) ? 0 : (pointObject["pitchBend"] | 0);
 
                     const time: number = Math.round((+pointObject["tick"]) * Config.partsPerBeat / importedPartsPerBeat);
-                    if (!Number.isSafeInteger(time) || time < 0
-                        || time > song.beatsPerBar * Config.partsPerBeat
-                        || (note.pins.length > 0 && time <= note.start + note.pins[note.pins.length - 1].time)) {
-                        invalidNote = true;
-                        break;
-                    }
 
                     // Only one instrument per pattern allowed in mod channels.
                     let volumeCap: number = song.getVolumeCapForSetting(isModChannel, instrument.modulators[mod], instrument.modFilterTypes[mod]);
@@ -755,6 +735,7 @@ export class Pattern {
                         size = ((pointObject["forMod"] | 0) > 0) ? Math.round(pointObject["volume"] | 0) : Math.max(0, Math.min(volumeCap, Math.round((pointObject["volume"] | 0) * volumeCap / 100)));
                     }
 
+                    if (time > song.beatsPerBar * Config.partsPerBeat) continue;
                     if (note.pins.length == 0) {
                         //if (time < noteClock) continue;
                         note.start = time;
@@ -766,10 +747,9 @@ export class Pattern {
 
                     note.pins.push(makeNotePin(interval - startInterval, time - note.start, size));
                 }
-                if (invalidNote || note.pins.length < 2) continue;
+                if (note.pins.length < 2) continue;
 
                 note.end = note.pins[note.pins.length - 1].time + note.start;
-                if (note.end <= note.start || note.end > song.beatsPerBar * Config.partsPerBeat) continue;
 
                 const maxPitch: number = isNoiseChannel ? Config.drumCount - 1 : Config.maxPitch;
                 let lowestPitch: number = maxPitch;
@@ -1284,6 +1264,31 @@ function patternNeedsIndependentNoteData(pattern: Pattern, barEnd: number, isMod
     const fullNotes: Note[] = getSerializablePatternNotes(pattern, barEnd);
     const legacyNotes: Note[] = getLegacyPatternNotes(pattern, barEnd, false);
     return fullNotes.length != legacyNotes.length;
+}
+
+
+function writeSignedLongTail(bits: BitFieldWriter, value: number): void {
+    bits.write(1, value < 0 ? 1 : 0);
+    bits.writeLongTail(0, 3, Math.abs(value));
+}
+
+function readSignedLongTail(bits: BitFieldReader): number {
+    const negative: boolean = bits.read(1) == 1;
+    const magnitude: number = bits.readLongTail(0, 3);
+    return negative ? -magnitude : magnitude;
+}
+
+function sortIndependentNotes(notes: Note[]): void {
+    notes.sort((a: Note, b: Note) => {
+        if (a.start != b.start) return a.start - b.start;
+
+        const aPitch: number = a.pitches.length > 0 ? a.pitches[0] : 0;
+        const bPitch: number = b.pitches.length > 0 ? b.pitches[0] : 0;
+
+        if (aPitch != bPitch) return aPitch - bPitch;
+
+        return a.end - b.end;
+    });
 }
 
 export class FilterControlPoint {
@@ -1812,6 +1817,7 @@ export class Instrument {
     public portamento: boolean = false;
     public portamentoTicks: number = 6;
     public portamentoMode: number = 0; // 0 always, 1 legato
+    public ottAmount: number = 0; // 0..63
     constructor(isNoiseChannel: boolean, isModChannel: boolean) {
 
         // @jummbus - My screed on how modulator arrays for instruments work, for the benefit of myself in the future, or whoever else.
@@ -1943,6 +1949,7 @@ export class Instrument {
         this.portamento = false;
         this.portamentoTicks = 6;
         this.portamentoMode = 0;
+        this.ottAmount = 0;
         this.sfxSampleId = "";
         this.sfxSampleName = "";
         this.sfxSourcePath = "";
@@ -2210,6 +2217,7 @@ export class Instrument {
         instrumentObject["portamento"] = this.portamento;
         instrumentObject["portamentoTicks"] = this.portamentoTicks;
         instrumentObject["portamentoMode"] = this.portamentoMode == 1 ? "legato" : "always";
+        instrumentObject["ott"] = Math.round(this.ottAmount * 100 / 63);
 
         for (let i: number = 0; i < Config.filterMorphCount; i++) {
             if (this.eqSubFilters[i] != null)
@@ -2494,6 +2502,7 @@ export class Instrument {
         this.portamento = instrumentObject["portamento"] == true;
         this.portamentoTicks = clamp(1, 49, instrumentObject["portamentoTicks"] == undefined ? 6 : Math.round(+instrumentObject["portamentoTicks"]));
         this.portamentoMode = instrumentObject["portamentoMode"] == "legato" || instrumentObject["portamentoMode"] == 1 ? 1 : 0;
+        this.ottAmount = clamp(0, 64, Math.round((+instrumentObject["ott"] || 0) * 63 / 100));
 
         if (instrumentObject["preset"] != undefined) {
             this.preset = instrumentObject["preset"] >>> 0;
@@ -3389,7 +3398,7 @@ export class Song {
     private static readonly _oldestUltraBoxVersion: number = 1;
     private static readonly _latestUltraBoxVersion: number = 6;
     private static readonly _oldestAbyssBoxVersion: number = 0;
-    private static readonly _latestAbyssBoxVersion: number = 12;
+    private static readonly _latestAbyssBoxVersion: number = 13;
     // One-character variant detection at the start of URL to distinguish variants such as JummBox, Or Goldbox. "j" and "g" respectively
 	//also "u" is ultrabox lol
     private static readonly _variant = 0x61; //"a" ~ abyssbox
@@ -3736,6 +3745,10 @@ export class Song {
                         base64IntToCharCode[voiceFlags],
                         base64IntToCharCode[Math.max(1, Math.min(48, instrument.portamentoTicks))],
                     );
+                }
+
+                if (instrument.ottAmount > 0) {
+                    buffer.push(SongTagCode.ott, base64IntToCharCode[Math.max(0, Math.min(63, instrument.ottAmount))]);
                 }
 
                 buffer.push(SongTagCode.eqFilter);
@@ -4362,57 +4375,123 @@ export class Song {
         Array.prototype.push.apply(buffer, digits); // append digits to buffer.
         bits.encodeBase64(buffer);
 
-        const independentPatternData: any[] = [];
+        const independentEntries: {
+            channelIndex: number;
+            patternIndex: number;
+            notes: Note[];
+        }[] = [];
 
         for (let channelIndex: number = 0; channelIndex < this.channels.length; channelIndex++) {
             const channel: Channel = this.channels[channelIndex];
             const isModChannel: boolean = this.getChannelIsMod(channelIndex);
-            const barEnd: number = this.beatsPerBar * Config.partsPerBeat + (+isModChannel);
+
+            if (isModChannel) continue;
+
+            const barEnd: number = this.beatsPerBar * Config.partsPerBeat;
 
             for (let patternIndex: number = 0; patternIndex < channel.patterns.length; patternIndex++) {
                 const pattern: Pattern = channel.patterns[patternIndex];
+                const fullNotes: Note[] = getSerializablePatternNotes(pattern, barEnd);
+                const legacyNotes: Note[] = getLegacyPatternNotes(pattern, barEnd, false);
 
-                if (!patternNeedsIndependentNoteData(pattern, barEnd, isModChannel)) continue;
+                if (fullNotes.length == legacyNotes.length) continue;
 
-                const noteData: any[] = [];
+                const legacySet: Set<Note> = new Set<Note>(legacyNotes);
+                const extraNotes: Note[] = [];
 
-                for (const note of getSerializablePatternNotes(pattern, barEnd)) {
-                    noteData.push([
-                        note.start,
-                        note.end,
-                        note.continuesLastPattern ? 1 : 0,
-                        Math.max(NoteType.normal, Math.min(NoteType.portamento, note.noteType)),
-                        note.pitches.slice(),
-                        note.pins.map((pin: NotePin) => [pin.interval, pin.time, pin.size]),
-                    ]);
+                for (const note of fullNotes) {
+                    if (!legacySet.has(note)) {
+                        extraNotes.push(note);
+                    }
                 }
 
-                independentPatternData.push([channelIndex, patternIndex, noteData]);
+                if (extraNotes.length == 0) continue;
+
+                sortIndependentNotes(extraNotes);
+
+                independentEntries.push({
+                    channelIndex,
+                    patternIndex,
+                    notes: extraNotes,
+                });
             }
         }
 
-        let independentNotesEncoded: boolean = independentPatternData.length == 0;
+        let independentNotesEncoded: boolean = independentEntries.length == 0;
 
-        if (independentPatternData.length > 0) {
-            const encodedIndependentData: string = encodeURIComponent(JSON.stringify(independentPatternData));
-            const independentDataLength: number = encodedIndependentData.length;
+        if (independentEntries.length > 0) {
+            const independentBits: BitFieldWriter = new BitFieldWriter();
+            const channelBits: number = Song.getNeededBits(this.getChannelCount() - 1);
+            const patternBits: number = Song.getNeededBits(this.patternsPerChannel - 1);
+            const noteSizeBits: number = Song.getNeededBits(Config.noteSizeMax);
 
-            if (independentDataLength < 0x1000000) {
-                independentNotesEncoded = true;
-                buffer.push(SongTagCode.independentNotes);
-                buffer.push(
-                    base64IntToCharCode[(independentDataLength >> 18) & 0x3f],
-                    base64IntToCharCode[(independentDataLength >> 12) & 0x3f],
-                    base64IntToCharCode[(independentDataLength >> 6) & 0x3f],
-                    base64IntToCharCode[independentDataLength & 0x3f],
-                );
+            independentBits.writeLongTail(1, 3, independentEntries.length);
 
-                for (let i: number = 0; i < independentDataLength; i++) {
-                    buffer.push(encodedIndependentData.charCodeAt(i));
+            for (const entry of independentEntries) {
+                independentBits.write(channelBits, entry.channelIndex);
+                independentBits.write(patternBits, entry.patternIndex);
+                independentBits.writeLongTail(1, 3, entry.notes.length);
+
+                const maxPitch: number = this.getChannelIsNoise(entry.channelIndex)
+                    ? Config.drumCount - 1
+                    : Config.maxPitch;
+
+                const pitchBits: number = Song.getNeededBits(maxPitch);
+                let previousStart: number = 0;
+
+                for (const note of entry.notes) {
+                    const startDelta: number = note.start - previousStart;
+                    const duration: number = note.end - note.start;
+
+                    independentBits.writeLongTail(0, 3, startDelta);
+                    independentBits.writePartDuration(duration);
+                    independentBits.write(1, note.start == 0 && note.continuesLastPattern ? 1 : 0);
+                    independentBits.writeLongTail(1, 1, note.pitches.length);
+
+                    const firstPitch: number = note.pitches[0];
+                    independentBits.write(pitchBits, firstPitch);
+
+                    for (let pitchIndex: number = 1; pitchIndex < note.pitches.length; pitchIndex++) {
+                        writeSignedLongTail(independentBits, note.pitches[pitchIndex] - firstPitch);
+                    }
+
+                    independentBits.writeLongTail(2, 1, note.pins.length);
+
+                    let previousPinTime: number = 0;
+
+                    for (let pinIndex: number = 0; pinIndex < note.pins.length; pinIndex++) {
+                        const pin: NotePin = note.pins[pinIndex];
+
+                        writeSignedLongTail(independentBits, pin.interval);
+                        independentBits.write(noteSizeBits, pin.size);
+
+                        if (pinIndex > 0 && pinIndex < note.pins.length - 1) {
+                            independentBits.writePartDuration(pin.time - previousPinTime);
+                        }
+
+                        previousPinTime = pin.time;
+                    }
+
+                    previousStart = note.start;
                 }
-            } else {
+            }
+
+            const independentData: number[] = independentBits.encodeBase64([]);
+            const independentDataLength: number = independentData.length;
+
+            if (independentDataLength >= 0x1000000) {
                 throw new Error("Independent Notes data exceeds the URL song format limit. Export as JSON instead; no notes were discarded.");
             }
+
+            independentNotesEncoded = true;
+            buffer.push(SongTagCode.independentNotes);
+            buffer.push(
+                base64IntToCharCode[(independentDataLength >> 18) & 0x3f],
+                base64IntToCharCode[(independentDataLength >> 12) & 0x3f],
+                base64IntToCharCode[(independentDataLength >> 6) & 0x3f],
+                base64IntToCharCode[independentDataLength & 0x3f],
+            );
+            Array.prototype.push.apply(buffer, independentData);
         }
 
         let hasSpecialNoteTypes: boolean = false;
@@ -4547,6 +4626,7 @@ export class Song {
         const beforeNine: boolean = version < 9;
         const beforeTen: boolean = version < 10;
         const beforeEleven: boolean = version < 11;
+        const beforeThirteen: boolean = version < 13;
         this.initToDefault((fromBeepBox && beforeNine) || ((fromJummBox && beforeFive) || (beforeFour && fromGoldBox)));
         const forceSimpleFilter: boolean = (fromBeepBox && beforeNine || fromJummBox && beforeFive);
 
@@ -5024,9 +5104,8 @@ export class Song {
                 instrument.portamentoTicks = Math.max(1, Math.min(48, base64CharCodeToInt[compressed.charCodeAt(charIndex++)]));
             } break;
             case SongTagCode.ott: {
-                // Consume legacy OTT data so existing links still open. The
-                // unfinished effect is disabled and omitted when the song saves.
-                charIndex++;
+                const instrument = this.channels[instrumentChannelIterator].instruments[instrumentIndexIterator];
+                instrument.ottAmount = base64CharCodeToInt[compressed.charCodeAt(charIndex++)];
             } break;
             case SongTagCode.preset: {
                 const presetValue: number = (base64CharCodeToInt[compressed.charCodeAt(charIndex++)] << 6) | (base64CharCodeToInt[compressed.charCodeAt(charIndex++)]);
@@ -6315,189 +6394,359 @@ export class Song {
 
                 const dataEnd: number = Math.min(compressed.length, charIndex + dataLength);
 
-                try {
-                    const decoded: string = decodeURIComponent(compressed.substring(charIndex, dataEnd));
-                    const patternData: any = JSON.parse(decoded);
+                if (beforeThirteen) {
+                    try {
+                        const decoded: string = decodeURIComponent(compressed.substring(charIndex, dataEnd));
+                        const patternData: any = JSON.parse(decoded);
 
-                    if (Array.isArray(patternData)) {
-                        for (const entry of patternData) {
-                            if (!Array.isArray(entry) || entry.length < 3) continue;
+                        if (Array.isArray(patternData)) {
+                            for (const entry of patternData) {
+                                if (!Array.isArray(entry) || entry.length < 3) continue;
+                                if (!Number.isInteger(entry[0]) || !Number.isInteger(entry[1])) continue;
 
-                            if (!Number.isInteger(entry[0]) || !Number.isInteger(entry[1])) continue;
-                            const channelIndex: number = entry[0];
-                            const patternIndex: number = entry[1];
-                            const notesData: any = entry[2];
-
-                            if (
-                                channelIndex < 0
-                                || channelIndex >= this.channels.length
-                                || patternIndex < 0
-                                || patternIndex >= this.channels[channelIndex].patterns.length
-                                || !Array.isArray(notesData)
-                            ) {
-                                continue;
-                            }
-
-                            const channel: Channel = this.channels[channelIndex];
-                            const pattern: Pattern = channel.patterns[patternIndex];
-                            independentNoteCounts.set(pattern, notesData.length);
-                            const isModChannel: boolean = this.getChannelIsMod(channelIndex);
-                            const barEnd: number = this.beatsPerBar * Config.partsPerBeat + (+isModChannel);
-                            const restoredNotes: Note[] = [];
-                            const restoredNoteKeys: Set<string> = new Set<string>();
-
-                            for (const rawNote of notesData) {
-                                if (!Array.isArray(rawNote) || rawNote.length < 6) continue;
-
-                                const start: number = rawNote[0];
-                                const end: number = rawNote[1];
-                                const continuesLastPattern: boolean = rawNote[2] == 1;
-                                const noteType: number = rawNote[3];
-                                const pitches: any = rawNote[4];
-                                const pins: any = rawNote[5];
+                                const channelIndex: number = entry[0];
+                                const patternIndex: number = entry[1];
+                                const notesData: any = entry[2];
 
                                 if (
-                                    !Number.isInteger(start)
-                                    || !Number.isInteger(end)
-                                    || (rawNote[2] != 0 && rawNote[2] != 1)
-                                    || !Number.isInteger(noteType)
-                                    || noteType < NoteType.normal
-                                    || noteType > NoteType.portamento
-                                    || start < 0
-                                    || end <= start
-                                    || end > barEnd
-                                    || !Array.isArray(pitches)
-                                    || pitches.length < 1
-                                    || !Array.isArray(pins)
-                                    || pins.length < 2
-                                    || pins.length > barEnd + 1
+                                    channelIndex < 0
+                                    || channelIndex >= this.channels.length
+                                    || patternIndex < 0
+                                    || patternIndex >= this.channels[channelIndex].patterns.length
+                                    || !Array.isArray(notesData)
                                 ) {
                                     continue;
                                 }
 
-                                const cleanPitches: number[] = [];
-                                let pitchesAreValid: boolean = true;
-                                const maxPitch: number = this.getChannelIsNoise(channelIndex)
-                                    ? Config.drumCount - 1
-                                    : Config.maxPitch;
+                                const channel: Channel = this.channels[channelIndex];
+                                const pattern: Pattern = channel.patterns[patternIndex];
+                                independentNoteCounts.set(pattern, notesData.length);
+                                const isModChannel: boolean = this.getChannelIsMod(channelIndex);
+                                const barEnd: number = this.beatsPerBar * Config.partsPerBeat + (+isModChannel);
+                                const restoredNotes: Note[] = [];
+                                const restoredNoteKeys: Set<string> = new Set<string>();
 
-                                for (const rawPitch of pitches) {
-                                    const pitch: number = rawPitch;
+                                for (const rawNote of notesData) {
+                                    if (!Array.isArray(rawNote) || rawNote.length < 6) continue;
 
-                                    if (
-                                        !Number.isInteger(rawPitch)
-                                        || pitch < 0
-                                        || pitch > maxPitch
-                                    ) {
-                                        pitchesAreValid = false;
-                                        break;
-                                    }
-
-                                    if (cleanPitches.indexOf(pitch) == -1) {
-                                        cleanPitches.push(pitch);
-                                    }
-
-                                    if (cleanPitches.length > Config.maxChordSize) {
-                                        pitchesAreValid = false;
-                                        break;
-                                    }
-                                }
-
-                                if (!pitchesAreValid || cleanPitches.length == 0) continue;
-
-                                const cleanPins: NotePin[] = [];
-                                let previousTime: number = -1;
-                                let pinsAreValid: boolean = true;
-
-                                for (const rawPin of pins) {
-                                    if (!Array.isArray(rawPin) || rawPin.length < 3) {
-                                        pinsAreValid = false;
-                                        break;
-                                    }
-
-                                    const interval: number = rawPin[0];
-                                    const time: number = rawPin[1];
-                                    const size: number = rawPin[2];
+                                    const start: number = rawNote[0];
+                                    const end: number = rawNote[1];
+                                    const continuesLastPattern: boolean = rawNote[2] == 1;
+                                    const noteType: number = rawNote[3];
+                                    const pitches: any = rawNote[4];
+                                    const pins: any = rawNote[5];
 
                                     if (
-                                        !Number.isInteger(interval)
-                                        || !Number.isInteger(time)
-                                        || !Number.isInteger(size)
-                                        || size < 0
-                                        || size > Config.noteSizeMax
-                                        || cleanPitches.some(pitch => pitch + interval < 0 || pitch + interval > maxPitch)
-                                        || time < 0
-                                        || time > end - start
-                                        || time <= previousTime
+                                        !Number.isInteger(start)
+                                        || !Number.isInteger(end)
+                                        || (rawNote[2] != 0 && rawNote[2] != 1)
+                                        || !Number.isInteger(noteType)
+                                        || noteType < NoteType.normal
+                                        || noteType > NoteType.portamento
+                                        || start < 0
+                                        || end <= start
+                                        || end > barEnd
+                                        || !Array.isArray(pitches)
+                                        || pitches.length < 1
+                                        || !Array.isArray(pins)
+                                        || pins.length < 2
+                                        || pins.length > barEnd + 1
                                     ) {
-                                        pinsAreValid = false;
-                                        break;
+                                        continue;
                                     }
 
-                                    cleanPins.push(makeNotePin(interval, time, size));
-                                    previousTime = time;
+                                    const cleanPitches: number[] = [];
+                                    let pitchesAreValid: boolean = true;
+                                    const maxPitch: number = this.getChannelIsNoise(channelIndex)
+                                        ? Config.drumCount - 1
+                                        : Config.maxPitch;
+
+                                    for (const rawPitch of pitches) {
+                                        const pitch: number = rawPitch;
+
+                                        if (
+                                            !Number.isInteger(rawPitch)
+                                            || pitch < 0
+                                            || pitch > maxPitch
+                                        ) {
+                                            pitchesAreValid = false;
+                                            break;
+                                        }
+
+                                        if (cleanPitches.indexOf(pitch) == -1) {
+                                            cleanPitches.push(pitch);
+                                        }
+
+                                        if (cleanPitches.length > Config.maxChordSize) {
+                                            pitchesAreValid = false;
+                                            break;
+                                        }
+                                    }
+
+                                    if (!pitchesAreValid || cleanPitches.length == 0) continue;
+
+                                    const cleanPins: NotePin[] = [];
+                                    let previousTime: number = -1;
+                                    let pinsAreValid: boolean = true;
+
+                                    for (const rawPin of pins) {
+                                        if (!Array.isArray(rawPin) || rawPin.length < 3) {
+                                            pinsAreValid = false;
+                                            break;
+                                        }
+
+                                        const interval: number = rawPin[0];
+                                        const time: number = rawPin[1];
+                                        const size: number = rawPin[2];
+
+                                        if (
+                                            !Number.isInteger(interval)
+                                            || !Number.isInteger(time)
+                                            || !Number.isInteger(size)
+                                            || size < 0
+                                            || size > Config.noteSizeMax
+                                            || cleanPitches.some(pitch => pitch + interval < 0 || pitch + interval > maxPitch)
+                                            || time < 0
+                                            || time > end - start
+                                            || time <= previousTime
+                                        ) {
+                                            pinsAreValid = false;
+                                            break;
+                                        }
+
+                                        cleanPins.push(makeNotePin(interval, time, size));
+                                        previousTime = time;
+                                    }
+
+                                    if (!pinsAreValid) continue;
+                                    if (cleanPins[0].time != 0) continue;
+                                    if (cleanPins[cleanPins.length - 1].time != end - start) continue;
+
+                                    const note: Note = new Note(
+                                        cleanPitches[0],
+                                        start,
+                                        end,
+                                        cleanPins[0].size,
+                                        false,
+                                    );
+
+                                    note.pitches = cleanPitches;
+                                    note.pins = cleanPins;
+                                    note.continuesLastPattern = start == 0 && continuesLastPattern;
+                                    note.noteType =
+                                        noteType == NoteType.slide
+                                            ? NoteType.slide
+                                            : noteType == NoteType.portamento
+                                                ? NoteType.portamento
+                                                : NoteType.normal;
+
+                                    const noteKey: string = JSON.stringify([
+                                        start, end, note.continuesLastPattern, note.noteType,
+                                        cleanPitches.slice().sort((a, b) => a - b), cleanPins,
+                                    ]);
+
+                                    if (restoredNoteKeys.has(noteKey)) continue;
+                                    restoredNoteKeys.add(noteKey);
+                                    restoredNotes.push(note);
                                 }
 
-                                if (!pinsAreValid) continue;
-                                if (cleanPins[0].time != 0) continue;
-                                if (cleanPins[cleanPins.length - 1].time != end - start) continue;
+                                sortIndependentNotes(restoredNotes);
+
+                                if (restoredNotes.length > 0 || notesData.length == 0) {
+                                    pattern.notes = restoredNotes;
+                                }
+                            }
+                        }
+                    } catch (error) {
+                        console.warn("Could not restore independent note data.", error);
+                    }
+                } else {
+                    try {
+                        const bits: BitFieldReader = new BitFieldReader(compressed, charIndex, dataEnd);
+                        const channelBits: number = Song.getNeededBits(this.getChannelCount() - 1);
+                        const patternBits: number = Song.getNeededBits(this.patternsPerChannel - 1);
+                        const noteSizeBits: number = Song.getNeededBits(Config.noteSizeMax);
+                        const entryCount: number = bits.readLongTail(1, 3);
+                        const maxEntryCount: number = this.getChannelCount() * this.patternsPerChannel;
+
+                        if (entryCount < 1 || entryCount > maxEntryCount) {
+                            throw new Error("Invalid independent note entry count.");
+                        }
+
+                        const pendingEntries: {
+                            pattern: Pattern;
+                            notes: Note[];
+                        }[] = [];
+
+                        for (let entryIndex: number = 0; entryIndex < entryCount; entryIndex++) {
+                            const channelIndex: number = bits.read(channelBits);
+                            const patternIndex: number = bits.read(patternBits);
+
+                            if (
+                                channelIndex < 0
+                                || channelIndex >= this.channels.length
+                                || this.getChannelIsMod(channelIndex)
+                            ) {
+                                throw new Error("Invalid independent note channel.");
+                            }
+
+                            const channel: Channel = this.channels[channelIndex];
+
+                            if (patternIndex < 0 || patternIndex >= channel.patterns.length) {
+                                throw new Error("Invalid independent note pattern.");
+                            }
+
+                            const pattern: Pattern = channel.patterns[patternIndex];
+                            const barEnd: number = this.beatsPerBar * Config.partsPerBeat;
+                            const noteCount: number = bits.readLongTail(1, 3);
+
+                            if (noteCount < 1 || noteCount > 4096) {
+                                throw new Error("Invalid independent note count.");
+                            }
+
+                            const maxPitch: number = this.getChannelIsNoise(channelIndex)
+                                ? Config.drumCount - 1
+                                : Config.maxPitch;
+
+                            const pitchBits: number = Song.getNeededBits(maxPitch);
+                            const extraNotes: Note[] = [];
+                            let previousStart: number = 0;
+
+                            for (let noteIndex: number = 0; noteIndex < noteCount; noteIndex++) {
+                                const startDelta: number = bits.readLongTail(0, 3);
+                                const start: number = previousStart + startDelta;
+                                const duration: number = bits.readPartDuration();
+                                const end: number = start + duration;
+                                const continuesLastPattern: boolean = bits.read(1) == 1;
+
+                                if (
+                                    start < 0
+                                    || start >= barEnd
+                                    || end <= start
+                                    || end > barEnd
+                                ) {
+                                    throw new Error("Invalid independent note timing.");
+                                }
+
+                                const pitchCount: number = bits.readLongTail(1, 1);
+
+                                if (pitchCount < 1 || pitchCount > Config.maxChordSize) {
+                                    throw new Error("Invalid independent note chord size.");
+                                }
+
+                                const firstPitch: number = bits.read(pitchBits);
+
+                                if (firstPitch < 0 || firstPitch > maxPitch) {
+                                    throw new Error("Invalid independent note pitch.");
+                                }
+
+                                const pitches: number[] = [firstPitch];
+
+                                for (let pitchIndex: number = 1; pitchIndex < pitchCount; pitchIndex++) {
+                                    const pitch: number = firstPitch + readSignedLongTail(bits);
+
+                                    if (pitch < 0 || pitch > maxPitch) {
+                                        throw new Error("Invalid independent note pitch.");
+                                    }
+
+                                    pitches.push(pitch);
+                                }
+
+                                const pinCount: number = bits.readLongTail(2, 1);
+
+                                if (pinCount < 2 || pinCount > barEnd + 1) {
+                                    throw new Error("Invalid independent note pin count.");
+                                }
+
+                                const pins: NotePin[] = [];
+                                let previousPinTime: number = 0;
+
+                                for (let pinIndex: number = 0; pinIndex < pinCount; pinIndex++) {
+                                    const interval: number = readSignedLongTail(bits);
+                                    const size: number = bits.read(noteSizeBits);
+
+                                    if (size < 0 || size > Config.noteSizeMax) {
+                                        throw new Error("Invalid independent note size.");
+                                    }
+
+                                    let time: number;
+
+                                    if (pinIndex == 0) {
+                                        time = 0;
+                                    } else if (pinIndex == pinCount - 1) {
+                                        time = duration;
+                                    } else {
+                                        time = previousPinTime + bits.readPartDuration();
+                                    }
+
+                                    if (pinIndex > 0 && time <= previousPinTime) {
+                                        throw new Error("Invalid independent note pin timing.");
+                                    }
+
+                                    if (time > duration) {
+                                        throw new Error("Invalid independent note pin duration.");
+                                    }
+
+                                    for (const pitch of pitches) {
+                                        const bentPitch: number = pitch + interval;
+
+                                        if (bentPitch < 0 || bentPitch > maxPitch) {
+                                            throw new Error("Independent note pitch bend is out of range.");
+                                        }
+                                    }
+
+                                    pins.push(makeNotePin(interval, time, size));
+                                    previousPinTime = time;
+                                }
+
+                                if (
+                                    pins.length < 2
+                                    || pins[0].time != 0
+                                    || pins[pins.length - 1].time != duration
+                                ) {
+                                    throw new Error("Invalid independent note pins.");
+                                }
 
                                 const note: Note = new Note(
-                                    cleanPitches[0],
+                                    pitches[0],
                                     start,
                                     end,
-                                    cleanPins[0].size,
+                                    pins[0].size,
                                     false,
                                 );
 
-                                note.pitches = cleanPitches;
-                                note.pins = cleanPins;
+                                note.pitches = pitches;
+                                note.pins = pins;
                                 note.continuesLastPattern = start == 0 && continuesLastPattern;
-                                note.noteType =
-                                    noteType == NoteType.slide
-                                        ? NoteType.slide
-                                        : noteType == NoteType.portamento
-                                            ? NoteType.portamento
-                                            : NoteType.normal;
-
-                                const noteKey: string = JSON.stringify([
-                                    start, end, note.continuesLastPattern, note.noteType,
-                                    cleanPitches.slice().sort((a, b) => a - b), cleanPins,
-                                ]);
-                                if (restoredNoteKeys.has(noteKey)) continue;
-                                restoredNoteKeys.add(noteKey);
-                                restoredNotes.push(note);
+                                note.noteType = NoteType.normal;
+                                extraNotes.push(note);
+                                previousStart = start;
                             }
 
-                            restoredNotes.sort((a: Note, b: Note) => {
-                                if (a.start != b.start) return a.start - b.start;
-
-                                const aPitch: number = a.pitches.length > 0 ? a.pitches[0] : 0;
-                                const bPitch: number = b.pitches.length > 0 ? b.pitches[0] : 0;
-                                if (aPitch != bPitch) return aPitch - bPitch;
-
-                                return a.end - b.end;
+                            pendingEntries.push({
+                                pattern,
+                                notes: extraNotes,
                             });
-
-                            if (restoredNotes.length > 0 || notesData.length == 0) pattern.notes = restoredNotes;
                         }
+
+                        for (const entry of pendingEntries) {
+                            entry.pattern.notes.push(...entry.notes);
+                            sortIndependentNotes(entry.pattern.notes);
+                        }
+                    } catch (error) {
+                        console.warn("Could not restore compact independent note data.", error);
                     }
-                } catch (error) {
-                    console.warn("Could not restore independent note data.", error);
                 }
 
                 charIndex = dataEnd;
             } break;
             case SongTagCode.noteTypes: {
-                // v9+ stores note types after the normal pattern stream so changing note metadata
-                // cannot corrupt the compressed note timing/pitch bitstream.
                 for (const channel of this.channels) {
                     for (const pattern of channel.patterns) {
                         const encodedCount: number = independentNoteCounts.get(pattern) ?? pattern.notes.length;
                         for (let noteIndex: number = 0; noteIndex < encodedCount; noteIndex++) {
                             const encodedType: number = base64CharCodeToInt[compressed.charCodeAt(charIndex++)];
                             if (encodedType == undefined || encodedType < NoteType.normal || encodedType > NoteType.portamento) {
-                                // A damaged extension should not prevent the rest of the song from loading.
                                 charIndex = compressed.length;
                                 break;
                             }
@@ -8327,9 +8576,7 @@ class EnvelopeComputer {
                 const noteEndTick: number = tone.noteEndPart * Config.ticksPerPart;
                 const noteLengthTicks: number = noteEndTick - noteStartTick;
                 const maximumSlideTicks: number = noteLengthTicks * 0.5;
-                const requestedSlideTicks: number = instrument.portamento || tone.note.noteType == NoteType.portamento
-                    ? instrument.portamentoTicks : instrument.slideTicks;
-                const slideTicks: number = Math.min(maximumSlideTicks, Math.max(1, requestedSlideTicks));
+                const slideTicks: number = Math.min(maximumSlideTicks, instrument.portamento ? instrument.portamentoTicks : instrument.slideTicks);
                 if (tone.prevNote != null && !tone.forceContinueAtStart) {
                     if (tickTimeStartReal - noteStartTick < slideTicks) {
                         prevSlideStart = true;
@@ -8497,9 +8744,7 @@ class Tone {
     public chordSize: number = 0;
     public drumsetPitch: number | null = null;
     public soundFontZone: SoundFontZone | null = null;
-    public soundFontSamplesHeld: number = 0;
     public note: Note | null = null;
-    public independentArpeggio: boolean = false;
     public prevNote: Note | null = null;
     public nextNote: Note | null = null;
     public prevNotePitchIndex: number = 0;
@@ -8586,7 +8831,6 @@ class Tone {
 
     public reset(): void {
         this.soundFontZone = null;
-        this.soundFontSamplesHeld = 0;
         this.continuedSfxTail = false;
         this.sfxTriggerNote = null;
         this.sfxTriggerBar = -1;
@@ -8663,6 +8907,24 @@ class InstrumentState {
 
     public volumeScale: number = 0;
     public aliases: boolean = false;
+
+    public ottAmount: number = 0.0;
+    public ottLow: number = 0.0;
+    public ottLow2: number = 0.0;
+    public ottHigh: number = 0.0;
+    public ottHigh2: number = 0.0;
+    public ottLowEnv: number = 0.0;
+    public ottMidEnv: number = 0.0;
+    public ottHighEnv: number = 0.0;
+    public ottLowGain: number = 1.0;
+    public ottMidGain: number = 1.0;
+    public ottHighGain: number = 1.0;
+    public ottLowCoeff: number = 0.0;
+    public ottHighCoeff: number = 0.0;
+    public ottEnvAttack: number = 0.0;
+    public ottEnvRelease: number = 0.0;
+    public ottGainAttack: number = 0.0;
+    public ottGainRelease: number = 0.0;
 
     public arpTime: number = 0;
     public vibratoTime: number = 0;
@@ -8923,6 +9185,17 @@ class InstrumentState {
         this.volumeScale = 1.0;
         this.aliases = false;
 
+        this.ottLow = 0.0;
+        this.ottLow2 = 0.0;
+        this.ottHigh = 0.0;
+        this.ottHigh2 = 0.0;
+        this.ottLowEnv = 0.0;
+        this.ottMidEnv = 0.0;
+        this.ottHighEnv = 0.0;
+        this.ottLowGain = 1.0;
+        this.ottMidGain = 1.0;
+        this.ottHighGain = 1.0;
+
         this.invertWave = false;
 
         this.awake = false;
@@ -8985,6 +9258,27 @@ class InstrumentState {
         this.allocateNecessaryBuffers(synth, instrument, samplesPerTick);
 
         const samplesPerSecond: number = synth.samplesPerSecond;
+
+        this.ottAmount = instrument.ottAmount / 63.0;
+        this.ottLowCoeff = 1.0 - Math.exp(-2.0 * Math.PI * 160.0 / samplesPerSecond);
+        this.ottHighCoeff = 1.0 - Math.exp(-2.0 * Math.PI * 2_600.0 / samplesPerSecond);
+        this.ottEnvAttack = 1.0 - Math.exp(-1.0 / (0.0035 * samplesPerSecond));
+        this.ottEnvRelease = 1.0 - Math.exp(-1.0 / (0.075 * samplesPerSecond));
+        this.ottGainAttack = 1.0 - Math.exp(-1.0 / (0.004 * samplesPerSecond));
+        this.ottGainRelease = 1.0 - Math.exp(-1.0 / (0.045 * samplesPerSecond));
+
+        if (this.ottAmount <= 0.0) {
+            this.ottLow = 0.0;
+            this.ottLow2 = 0.0;
+            this.ottHigh = 0.0;
+            this.ottHigh2 = 0.0;
+            this.ottLowEnv = 0.0;
+            this.ottMidEnv = 0.0;
+            this.ottHighEnv = 0.0;
+            this.ottLowGain = 1.0;
+            this.ottMidGain = 1.0;
+            this.ottHighGain = 1.0;
+        }
 
         this.updateWaves(instrument, samplesPerSecond);
 
@@ -11207,7 +11501,6 @@ export class Synth {
         if (this.tonePool.count() > 0) {
             const tone: Tone = this.tonePool.popBack();
             tone.freshlyAllocated = true;
-            tone.independentArpeggio = false;
             return tone;
         }
         return new Tone();
@@ -11653,58 +11946,18 @@ export class Synth {
             const getPreviousPlayableNote = (target: Note): Note | null => {
                 if (pattern == null) return null;
 
-                const partsPerBar: number = Config.partsPerBeat * song.beatsPerBar;
-                const targetAtBarStart: boolean = target.start == 0;
-                const sourcePattern: Pattern | null = targetAtBarStart
-                    ? (this.prevBar == null ? null : song.getPattern(channelIndex, this.prevBar))
-                    : pattern;
-                if (sourcePattern == null) return null;
-
-                const targetPitch: number = target.pitches.length > 0
-                    ? target.pitches[0] + target.pins[0].interval
-                    : 0;
-
                 let previous: Note | null = null;
-                let bestGap: number = Number.POSITIVE_INFINITY;
-                let bestPitchDistance: number = Number.POSITIVE_INFINITY;
-                let bestStart: number = Number.NEGATIVE_INFINITY;
 
-                for (const candidate of sourcePattern.notes) {
-                    if ((!targetAtBarStart && candidate == target) || candidate.noteType == NoteType.slide) continue;
-                    if (candidate.pitches.length == 0 || candidate.pins.length == 0) continue;
-                    if (targetAtBarStart) {
-                        if (candidate.end != partsPerBar) continue;
-                    } else if (candidate.start >= target.start) {
-                        continue;
-                    } else if (candidate.end > target.start && target.noteType != NoteType.portamento) {
-                        // A sustained independent voice is not automatically the
-                        // previous voice for an unrelated note starting above it.
-                        continue;
-                    }
-
-                    const gap: number = targetAtBarStart
-                        ? Math.max(0, target.start + partsPerBar - candidate.end)
-                        : Math.max(0, target.start - candidate.end);
-                    const endInterval: number = candidate.pins[candidate.pins.length - 1].interval;
-
-                    let pitchDistance: number = Number.POSITIVE_INFINITY;
-                    for (const pitch of candidate.pitches) {
-                        pitchDistance = Math.min(
-                            pitchDistance,
-                            Math.abs(pitch + endInterval - targetPitch),
-                        );
-                    }
+                for (const candidate of pattern.notes) {
+                    if (candidate == target || candidate.noteType == NoteType.slide) continue;
+                    if (candidate.start >= target.start) continue;
 
                     if (
                         previous == null
-                        || gap < bestGap
-                        || (gap == bestGap && pitchDistance < bestPitchDistance)
-                        || (gap == bestGap && pitchDistance == bestPitchDistance && candidate.start > bestStart)
+                        || candidate.start > previous.start
+                        || (candidate.start == previous.start && candidate.end > previous.end)
                     ) {
                         previous = candidate;
-                        bestGap = gap;
-                        bestPitchDistance = pitchDistance;
-                        bestStart = candidate.start;
                     }
                 }
 
@@ -11726,30 +11979,6 @@ export class Synth {
                 }
 
                 return bestIndex;
-            };
-
-            const getClosestBoundaryNote = (sourcePattern: Pattern, atStart: boolean, targetPitch: number): Note | null => {
-                const partsPerBar: number = Config.partsPerBeat * song.beatsPerBar;
-                let bestNote: Note | null = null;
-                let bestDistance: number = Number.POSITIVE_INFINITY;
-
-                for (const candidate of sourcePattern.notes) {
-                    if (candidate.noteType == NoteType.slide || candidate.pitches.length == 0 || candidate.pins.length == 0) continue;
-                    if (atStart ? candidate.start != 0 : candidate.end != partsPerBar) continue;
-
-                    const pinInterval: number = atStart ? candidate.pins[0].interval : candidate.pins[candidate.pins.length - 1].interval;
-                    let distance: number = Number.POSITIVE_INFINITY;
-                    for (const pitch of candidate.pitches) {
-                        distance = Math.min(distance, Math.abs(pitch + pinInterval - targetPitch));
-                    }
-
-                    if (distance < bestDistance) {
-                        bestNote = candidate;
-                        bestDistance = distance;
-                    }
-                }
-
-                return bestNote;
             };
 
             for (let instrumentIndex: number = 0; instrumentIndex < channel.instruments.length; instrumentIndex++) {
@@ -11787,29 +12016,12 @@ export class Synth {
                 if (!oneShotSfx && patternHasOverlaps && instrument.voiceMode == 0 && activeNotes.length > 0 && instrumentIsActiveInPattern) {
                     const chord: Chord = instrument.getChord();
 
-                    const getIndependentPreviousNote = (activeNote: Note): Note | null => {
-                        const transition: Transition = instrument.getTransitionForNote(activeNote);
-                        if (!transition.slides) return null;
-                        const previous: Note | null = getPreviousPlayableNote(activeNote);
-                        if (previous == null) return null;
-                        if (activeNote.start == 0) {
-                            const previousPattern: Pattern | null = this.prevBar == null ? null : song.getPattern(channelIndex, this.prevBar);
-                            if (previousPattern == null || this.adjacentPatternHasCompatibleInstrumentTransition(
-                                song, channel, pattern!, previousPattern, instrumentIndex,
-                                transition, chord, activeNote, previous, false,
-                            ) == null) return null;
-                        } else if (activeNote.noteType != NoteType.portamento && !(instrument.portamento && instrument.portamentoMode == 0) && previous.end < activeNote.start) {
-                            return null;
-                        }
-                        return previous;
-                    };
-
-                    const getIndependentTone = (activeNote: Note, pitch: number, arpeggio: boolean = false): Tone => {
+                    const getIndependentTone = (activeNote: Note, pitch: number): Tone => {
                         let matchIndex: number = -1;
 
                         for (let i: number = toneCount; i < toneList.count(); i++) {
                             const candidate: Tone = toneList.get(i);
-                            if (arpeggio ? candidate.independentArpeggio : !candidate.independentArpeggio && candidate.note == activeNote && candidate.pitches[0] == pitch) {
+                            if (candidate.note == activeNote && candidate.pitches[0] == pitch) {
                                 matchIndex = i;
                                 break;
                             }
@@ -11826,105 +12038,38 @@ export class Synth {
                             return toneList.get(toneCount);
                         }
 
-                        // Preserve unmatched voices until all active notes have had
-                        // a chance to claim them. A newly inserted note must not
-                        // steal a sustained voice that is processed later.
-                        const tone: Tone = this.newTone();
-                        tone.independentArpeggio = arpeggio;
-                        if (toneCount < toneList.count()) {
-                            const displaced: Tone = toneList.get(toneCount);
-                            toneList.set(toneCount, tone);
-                            toneList.pushBack(displaced);
-                        } else {
+                        let tone: Tone;
+                        const atNoteStart: boolean = Config.ticksPerPart * activeNote.start == currentTick;
+
+                        if (toneList.count() <= toneCount) {
+                            tone = takeRunningSfxTail(activeNote.start) || this.newTone();
                             toneList.pushBack(tone);
+                        } else {
+                            const oldTone: Tone = toneList.get(toneCount);
+
+                            if (oneShotSfx && atNoteStart && !oldTone.isOnLastTick) {
+                                tone = oldTone;
+                                tone.continuedSfxTail = true;
+                            } else {
+                                if (oldTone.isOnLastTick) {
+                                    this.freeTone(oldTone);
+                                } else {
+                                    this.releaseTone(instrumentState, oldTone);
+                                }
+
+                                tone = takeRunningSfxTail(activeNote.start) || this.newTone();
+                                toneList.set(toneCount, tone);
+                            }
                         }
 
                         return tone;
                     };
 
-                    // Arpeggio instruments expect all pitches to live on one Note object.
-                    // Independent Notes deliberately stores each lane as a separate Note,
-                    // so combine only the currently-active pitches for tone scheduling.
-                    // The pattern data remains untouched and every lane stays editable.
-                    if (chord.arpeggiates) {
-                        const arpeggioPitches: number[] = [];
-                        const pitchOwners: Map<number, Note> = new Map<number, Note>();
-
-                        for (const activeNote of activeNotes) {
-                            for (const pitch of activeNote.pitches) {
-                                if (
-                                    effectsIncludeNoteRange(instrument.effects)
-                                    && (pitch < instrument.lowerNoteLimit || pitch > instrument.upperNoteLimit)
-                                ) {
-                                    continue;
-                                }
-
-                                const previousOwner: Note | undefined = pitchOwners.get(pitch);
-                                if (previousOwner == undefined || activeNote.start >= previousOwner.start) pitchOwners.set(pitch, activeNote);
-                            }
-                        }
-
-                        arpeggioPitches.push(...pitchOwners.keys());
-                        arpeggioPitches.sort((a: number, b: number) => a - b);
-
-                        if (arpeggioPitches.length > 0) {
-                            const tone: Tone = getIndependentTone(activeNotes[0], arpeggioPitches[0], true);
-                            const oldNote: Note | null = tone.note;
-                            const arpeggioIndex: number = getArpeggioPitchIndex(
-                                arpeggioPitches.length,
-                                instrument.fastTwoNoteArp,
-                                Math.floor(instrumentState.arpTime / Config.ticksPerArpeggio),
-                            );
-                            const owner: Note = pitchOwners.get(arpeggioPitches[arpeggioIndex])!;
-                            const previousPattern: Pattern | null = this.prevBar == null ? null : song.getPattern(channelIndex, this.prevBar);
-                            const previousOwner: Note | null = owner.start == 0 && previousPattern != null
-                                ? (oldNote != null && oldNote.end == Config.partsPerBeat * song.beatsPerBar
-                                    ? oldNote
-                                    : getClosestBoundaryNote(previousPattern, false, arpeggioPitches[arpeggioIndex]))
-                                : getIndependentPreviousNote(owner);
-                            const continueAtStart: boolean = owner.start == 0 && owner.continuesLastPattern && previousOwner != null;
-                            const atNoteStart: boolean = Config.ticksPerPart * owner.start == currentTick
-                                && (tone.freshlyAllocated || (owner.start == 0 && !continueAtStart && oldNote != owner));
-
-                            toneCount++;
-
-                            for (let i: number = 0; i < arpeggioPitches.length; i++) {
-                                tone.pitches[i] = arpeggioPitches[i];
-                            }
-
-                            tone.pitchCount = arpeggioPitches.length;
-                            tone.chordSize = 1;
-                            tone.instrumentIndex = instrumentIndex;
-                            tone.note = owner;
-                            tone.noteStartPart = owner.start;
-                            tone.noteEndPart = owner.end;
-                            tone.prevNote = previousOwner;
-                            tone.nextNote = null;
-                            tone.prevNotePitchIndex = 0;
-                            tone.nextNotePitchIndex = 0;
-                            tone.atNoteStart = atNoteStart && !tone.continuedSfxTail;
-                            tone.continuedSfxTail = false;
-                            tone.passedEndOfNote = false;
-                            tone.forceContinueAtStart = continueAtStart;
-                            tone.forceContinueAtEnd = false;
-
-                            // This is intentionally the normal chord path so the existing
-                            // 1/2/3 arpeggio ordering and timing are reused unchanged.
-                            this.computeTone(song, channelIndex, samplesPerTick, tone, false, false);
-                        }
-                    } else {
-                        const activePitchOwners: Map<number, Note> = new Map<number, Note>();
-                        for (const activeNote of activeNotes) {
-                            for (const pitch of activeNote.pitches) {
-                                const previousOwner: Note | undefined = activePitchOwners.get(pitch);
-                                if (previousOwner == undefined || activeNote.start >= previousOwner.start) activePitchOwners.set(pitch, activeNote);
-                            }
-                        }
                     for (const activeNote of activeNotes) {
-                        let filteredPitches: number[] = activeNote.pitches.filter(pitch => activePitchOwners.get(pitch) == activeNote);
+                        let filteredPitches: number[] = activeNote.pitches;
 
                         if (effectsIncludeNoteRange(instrument.effects)) {
-                            filteredPitches = filteredPitches.filter(pitch => pitch >= instrument.lowerNoteLimit && pitch <= instrument.upperNoteLimit);
+                            filteredPitches = activeNote.pitches.filter(pitch => pitch >= instrument.lowerNoteLimit && pitch <= instrument.upperNoteLimit);
                         }
 
                         if (filteredPitches.length <= 0) continue;
@@ -11945,7 +12090,7 @@ export class Synth {
                             tone.note = activeNote;
                             tone.noteStartPart = activeNote.start;
                             tone.noteEndPart = activeNote.end;
-                            tone.prevNote = getIndependentPreviousNote(activeNote);
+                            tone.prevNote = activeNote.noteType == NoteType.portamento ? getPreviousPlayableNote(activeNote) : null;
                             tone.nextNote = null;
                             tone.prevNotePitchIndex = tone.prevNote == null ? 0 : getClosestPitchIndex(tone.prevNote, filteredPitches[0]);
                             tone.nextNotePitchIndex = 0;
@@ -11959,40 +12104,23 @@ export class Synth {
                             tone.forceContinueAtStart = false;
                             tone.forceContinueAtEnd = false;
 
-                            this.computeTone(song, channelIndex, samplesPerTick, tone, false, false, true);
+                            this.computeTone(song, channelIndex, samplesPerTick, tone, false, false);
                         } else {
                             for (let pitchIndex: number = 0; pitchIndex < filteredPitches.length; pitchIndex++) {
                                 const pitch: number = filteredPitches[pitchIndex];
-                                let strumOffsetParts: number = 0;
-                                let chordSize: number = filteredPitches.length;
-                                if (chord.strumParts > 0 && pattern != null) {
-                                    const groupPitches: number[] = [];
-                                    for (const groupNote of pattern.notes) {
-                                        if (groupNote.start != activeNote.start || groupNote.noteType == NoteType.slide) continue;
-                                        for (const groupPitch of groupNote.pitches) {
-                                            if (effectsIncludeNoteRange(instrument.effects) && (groupPitch < instrument.lowerNoteLimit || groupPitch > instrument.upperNoteLimit)) continue;
-                                            if (groupPitches.indexOf(groupPitch) == -1) groupPitches.push(groupPitch);
-                                        }
-                                    }
-                                    groupPitches.sort((a: number, b: number) => a - b);
-                                    chordSize = groupPitches.length;
-                                    strumOffsetParts = Math.max(0, groupPitches.indexOf(pitch)) * instrument.strumParts;
-                                }
-                                const noteStartPart: number = activeNote.start + strumOffsetParts;
-                                if (noteStartPart >= activeNote.end || currentPart < noteStartPart) continue;
                                 const tone: Tone = getIndependentTone(activeNote, pitch);
-                                const atNoteStart: boolean = Config.ticksPerPart * noteStartPart == currentTick;
+                                const atNoteStart: boolean = Config.ticksPerPart * activeNote.start == currentTick;
 
                                 toneCount++;
 
                                 tone.pitches[0] = pitch;
                                 tone.pitchCount = 1;
-                                tone.chordSize = chordSize;
+                                tone.chordSize = filteredPitches.length;
                                 tone.instrumentIndex = instrumentIndex;
                                 tone.note = activeNote;
-                                tone.noteStartPart = noteStartPart;
+                                tone.noteStartPart = activeNote.start;
                                 tone.noteEndPart = activeNote.end;
-                                tone.prevNote = getIndependentPreviousNote(activeNote);
+                                tone.prevNote = activeNote.noteType == NoteType.portamento ? getPreviousPlayableNote(activeNote) : null;
                                 tone.nextNote = null;
                                 tone.prevNotePitchIndex = tone.prevNote == null ? pitchIndex : getClosestPitchIndex(tone.prevNote, pitch);
                                 tone.nextNotePitchIndex = pitchIndex;
@@ -12006,10 +12134,9 @@ export class Synth {
                                 tone.forceContinueAtStart = false;
                                 tone.forceContinueAtEnd = false;
 
-                                this.computeTone(song, channelIndex, samplesPerTick, tone, false, false, true);
+                                this.computeTone(song, channelIndex, samplesPerTick, tone, false, false);
                             }
                         }
-                    }
                     }
                 } else if ((note != null) && instrumentIsActiveInPattern) {
                     let prevNoteForThisInstrument: Note | null = prevNote;
@@ -12049,7 +12176,7 @@ export class Synth {
                         nextNoteForThisInstrument = null;
                     }
 
-                    const partsPerBar: number = Config.partsPerBeat * song.beatsPerBar;
+                    const partsPerBar: Number = Config.partsPerBeat * song.beatsPerBar;
                     const transition: Transition = instrument.getTransitionForNote(note);
                     const chord: Chord = instrument.getChord();
                     const useStrumSpeed: boolean = chord.strumParts > 0;
@@ -12061,8 +12188,7 @@ export class Synth {
                         // If the beginning of the note coincides with the beginning of the pattern,
                         let prevPattern: Pattern | null = (this.prevBar == null) ? null : song.getPattern(channelIndex, this.prevBar);
                         if (prevPattern != null) {
-                            const currentStartPitch: number = note.pitches[0] + note.pins[0].interval;
-                            const lastNote: Note | null = getClosestBoundaryNote(prevPattern, false, currentStartPitch);
+                            const lastNote: Note | null = (prevPattern.notes.length <= 0) ? null : prevPattern.notes[prevPattern.notes.length - 1];
                             if (lastNote != null && lastNote.end == partsPerBar) {
                                 const patternForcesContinueAtStart: boolean = note.continuesLastPattern && Synth.adjacentNotesHaveMatchingPitches(lastNote, note);
                                 const chordOfCompatibleInstrument: Chord | null = this.adjacentPatternHasCompatibleInstrumentTransition(song, channel, pattern!, prevPattern, instrumentIndex, transition, chord, note, lastNote, patternForcesContinueAtStart);
@@ -12087,8 +12213,7 @@ export class Synth {
                         // adjacent note at the beginning of the next pattern.
                         let nextPattern: Pattern | null = (this.nextBar == null) ? null : song.getPattern(channelIndex, this.nextBar);
                         if (nextPattern != null) {
-                            const currentEndPitch: number = note.pitches[0] + note.pins[note.pins.length - 1].interval;
-                            const firstNote: Note | null = getClosestBoundaryNote(nextPattern, true, currentEndPitch);
+                            const firstNote: Note | null = (nextPattern.notes.length <= 0) ? null : nextPattern.notes[0];
                             if (firstNote != null && firstNote.start == 0) {
                                 const nextPatternForcesContinueAtStart: boolean = firstNote.continuesLastPattern && Synth.adjacentNotesHaveMatchingPitches(note, firstNote);
                                 const chordOfCompatibleInstrument: Chord | null = this.adjacentPatternHasCompatibleInstrumentTransition(song, channel, pattern!, nextPattern, instrumentIndex, transition, chord, note, firstNote, nextPatternForcesContinueAtStart);
@@ -12340,7 +12465,7 @@ export class Synth {
         return 1.0 / ((chordSize - 1) * 0.25 + 1.0);
     }
 
-    private computeTone(song: Song, channelIndex: number, samplesPerTick: number, tone: Tone, released: boolean, shouldFadeOutFast: boolean, independentNote: boolean = false): void {
+    private computeTone(song: Song, channelIndex: number, samplesPerTick: number, tone: Tone, released: boolean, shouldFadeOutFast: boolean): void {
         const roundedSamplesPerTick: number = Math.ceil(samplesPerTick);
         const channel: Channel = song.channels[channelIndex];
         const channelState: ChannelState = this.channels[channelIndex];
@@ -12353,10 +12478,7 @@ export class Synth {
         }
         const transition: Transition = instrument.getTransitionForNote(tone.note);
         const chord: Chord = instrument.getChord();
-        const useArpeggio: boolean = chord.arpeggiates && !independentNote;
-        const chordExpression: number = chord.singleTone && !independentNote
-            ? 1.0
-            : Synth.computeChordExpression(Math.max(1, tone.chordSize));
+        const chordExpression: number = chord.singleTone ? 1.0 : Synth.computeChordExpression(tone.chordSize);
         const isNoiseChannel: boolean = song.getChannelIsNoise(channelIndex);
         const intervalScale: number = isNoiseChannel ? Config.noiseInterval : 1;
         const secondsPerPart: number = Config.ticksPerPart * samplesPerTick / this.samplesPerSecond;
@@ -12376,58 +12498,39 @@ export class Synth {
 
             if (currentPattern != null) {
                 let latestSlide: Note | null = null;
-                let referencePitch: number = 0;
 
-                for (const slideCandidate of currentPattern.notes) {
-                    if (slideCandidate.noteType != NoteType.slide || slideCandidate.pitches.length == 0 || slideCandidate.pins.length == 0) continue;
-                    if (slideCandidate.start < tone.note.start || slideCandidate.start >= tone.note.end) continue;
-                    if (slideCandidate.start > partTimeStart) continue;
+                for (const candidate of currentPattern.notes) {
+                    if (candidate.noteType != NoteType.slide) continue;
+                    if (candidate.start < tone.note.start || candidate.start >= tone.note.end) continue;
+                    if (candidate.start > partTimeStart) continue;
 
-                    const slideTargetPitch: number = slideCandidate.pitches[0] + slideCandidate.pins[0].interval;
-                    let referenceNote: Note | null = null;
-                    let candidateReferencePitch: number = 0;
-                    let closestDistance: number = Number.POSITIVE_INFINITY;
-                    let latestReferenceStart: number = Number.NEGATIVE_INFINITY;
-
-                    for (const candidate of currentPattern.notes) {
-                        if (candidate.noteType == NoteType.slide) continue;
-                        if (candidate.start > slideCandidate.start || candidate.end <= slideCandidate.start) continue;
-
-                        for (const pitch of candidate.pitches) {
-                            const distance: number = Math.abs(slideTargetPitch - pitch);
-                            if (
-                                distance < closestDistance
-                                || (distance == closestDistance && candidate.start > latestReferenceStart)
-                            ) {
-                                closestDistance = distance;
-                                latestReferenceStart = candidate.start;
-                                candidateReferencePitch = pitch;
-                                referenceNote = candidate;
-                            }
-                        }
-                    }
-
-                    // Each slide controller belongs to the closest active voice.
-                    // Keep searching when this controller belongs to another
-                    // Independent Note; an earlier controller may target this one.
-                    if (referenceNote == null || ((independentNote || tone.independentArpeggio) && referenceNote != tone.note)) continue;
-
-                    if (latestSlide == null || slideCandidate.start >= latestSlide.start) {
-                        latestSlide = slideCandidate;
-                        referencePitch = candidateReferencePitch;
+                    if (latestSlide == null || candidate.start >= latestSlide.start) {
+                        latestSlide = candidate;
                     }
                 }
 
                 if (latestSlide != null) {
-                    specialNoteSlideActive = true;
-                    const slideTargetPitch: number = latestSlide.pitches[0] + latestSlide.pins[0].interval;
-                    const targetOffset: number = slideTargetPitch - referencePitch;
-                    const slideLength: number = Math.max(1.0 / Config.ticksPerPart, latestSlide.end - latestSlide.start);
-                    const progressStart: number = Math.max(0.0, Math.min(1.0, (partTimeStart - latestSlide.start) / slideLength));
-                    const progressEnd: number = Math.max(0.0, Math.min(1.0, (partTimeEnd - latestSlide.start) / slideLength));
+                    let referencePitch: number = Number.NEGATIVE_INFINITY;
 
-                    specialNoteSlideOffsetStart = targetOffset * progressStart;
-                    specialNoteSlideOffsetEnd = targetOffset * progressEnd;
+                    for (const candidate of currentPattern.notes) {
+                        if (candidate.noteType == NoteType.slide) continue;
+                        if (candidate.start > latestSlide.start || candidate.end <= latestSlide.start) continue;
+
+                        for (const pitch of candidate.pitches) {
+                            referencePitch = Math.max(referencePitch, pitch);
+                        }
+                    }
+
+                    if (referencePitch != Number.NEGATIVE_INFINITY) {
+                        specialNoteSlideActive = true;
+                        const targetOffset: number = latestSlide.pitches[0] - referencePitch;
+                        const slideLength: number = Math.max(1.0 / Config.ticksPerPart, latestSlide.end - latestSlide.start);
+                        const progressStart: number = Math.max(0.0, Math.min(1.0, (partTimeStart - latestSlide.start) / slideLength));
+                        const progressEnd: number = Math.max(0.0, Math.min(1.0, (partTimeEnd - latestSlide.start) / slideLength));
+
+                        specialNoteSlideOffsetStart = targetOffset * progressStart;
+                        specialNoteSlideOffsetEnd = targetOffset * progressEnd;
+                    }
                 }
             }
         }
@@ -12965,7 +13068,7 @@ export class Synth {
             let totalCarrierExpression: number = 0.0;
 
             let arpeggioInterval: number = 0;
-            const arpeggiates: boolean = useArpeggio;
+            const arpeggiates: boolean = chord.arpeggiates;
             if (tone.pitchCount > 1 && arpeggiates) {
                 const arpeggio: number = Math.floor(instrumentState.arpTime / Config.ticksPerArpeggio);
                 arpeggioInterval = tone.pitches[getArpeggioPitchIndex(tone.pitchCount, instrument.fastTwoNoteArp, arpeggio)] - tone.pitches[0];
@@ -13099,7 +13202,7 @@ export class Synth {
 
 
             let pitch: number = tone.pitches[0];
-            if (tone.pitchCount > 1 && (useArpeggio || chord.customInterval)) {
+            if (tone.pitchCount > 1 && (chord.arpeggiates || chord.customInterval)) {
                 const arpeggio: number = Math.floor(instrumentState.arpTime / Config.ticksPerArpeggio);
                 if (chord.customInterval) {
                     const intervalOffset: number = tone.pitches[1 + getArpeggioPitchIndex(tone.pitchCount - 1, instrument.fastTwoNoteArp, arpeggio)] - tone.pitches[0];
@@ -14385,6 +14488,7 @@ export class Synth {
         const usesPhaser: boolean = effectsIncludePhaser(instrumentState.effects);
         const usesInvertWave: boolean = effectsIncludeInvertWave(instrumentState.effects) && instrumentState.invertWave;
         const usesGranular: boolean = effectsIncludeGranular(instrumentState.effects);
+        const usesOtt: boolean = instrumentState.ottAmount > 0.0;
         let signature: number = 0; if (usesDistortion) signature = signature | 1;
         signature = signature << 1; if (usesBitcrusher) signature = signature | 1;
         signature = signature << 1; if (usesEqFilter) signature = signature | 1;
@@ -14396,6 +14500,7 @@ export class Synth {
         signature = signature << 1; if (usesPhaser) signature = signature | 1;
         signature = signature << 1; if (usesInvertWave) signature = signature | 1;
         signature = signature << 1; if (usesGranular) signature = signature | 1;
+        signature = signature << 1; if (usesOtt) signature = signature | 1;
 
         let effectsFunction: Function = Synth.effectsFunctionCache[signature];
         if (effectsFunction == undefined) {
@@ -14545,6 +14650,29 @@ export class Synth {
 				
 				let eqFilterVolume = +instrumentState.eqFilterVolume;
 				const eqFilterVolumeDelta = +instrumentState.eqFilterVolumeDelta;`
+
+            if (usesOtt) {
+                effectsSource += `
+
+                const ottAmount = +instrumentState.ottAmount;
+                const ottDepth = Math.pow(ottAmount, 0.72);
+                const ottLowCoeff = +instrumentState.ottLowCoeff;
+                const ottHighCoeff = +instrumentState.ottHighCoeff;
+                const ottEnvAttack = +instrumentState.ottEnvAttack;
+                const ottEnvRelease = +instrumentState.ottEnvRelease;
+                const ottGainAttack = +instrumentState.ottGainAttack;
+                const ottGainRelease = +instrumentState.ottGainRelease;
+                let ottLow = +instrumentState.ottLow;
+                let ottLow2 = +instrumentState.ottLow2;
+                let ottHigh = +instrumentState.ottHigh;
+                let ottHigh2 = +instrumentState.ottHigh2;
+                let ottLowEnv = +instrumentState.ottLowEnv;
+                let ottMidEnv = +instrumentState.ottMidEnv;
+                let ottHighEnv = +instrumentState.ottHighEnv;
+                let ottLowGain = +instrumentState.ottLowGain;
+                let ottMidGain = +instrumentState.ottMidGain;
+                let ottHighGain = +instrumentState.ottHighGain;`
+            }
 
             if (usesPanning) {
                 effectsSource += `
@@ -14845,6 +14973,71 @@ export class Synth {
 					sample *= eqFilterVolume;
 					eqFilterVolume += eqFilterVolumeDelta;`
 
+            if (usesOtt) {
+                effectsSource += `
+
+                    // Two cascaded one-pole stages give the three bands a much cleaner
+                    // separation than the old single-pole split.
+                    ottLow += ottLowCoeff * (sample - ottLow);
+                    ottLow2 += ottLowCoeff * (ottLow - ottLow2);
+                    ottHigh += ottHighCoeff * (sample - ottHigh);
+                    ottHigh2 += ottHighCoeff * (ottHigh - ottHigh2);
+
+                    const ottLowBand = ottLow2;
+                    const ottMidBand = ottHigh2 - ottLow2;
+                    const ottHighBand = sample - ottHigh2;
+
+                    const ottLowAbs = Math.abs(ottLowBand);
+                    const ottMidAbs = Math.abs(ottMidBand);
+                    const ottHighAbs = Math.abs(ottHighBand);
+
+                    ottLowEnv += (ottLowAbs > ottLowEnv ? ottEnvAttack : ottEnvRelease) * (ottLowAbs - ottLowEnv);
+                    ottMidEnv += (ottMidAbs > ottMidEnv ? ottEnvAttack : ottEnvRelease) * (ottMidAbs - ottMidEnv);
+                    ottHighEnv += (ottHighAbs > ottHighEnv ? ottEnvAttack : ottEnvRelease) * (ottHighAbs - ottHighEnv);
+
+                    const ottLowDb = 20.0 * Math.log10(Math.max(ottLowEnv, 0.000001));
+                    const ottMidDb = 20.0 * Math.log10(Math.max(ottMidEnv, 0.000001));
+                    const ottHighDb = 20.0 * Math.log10(Math.max(ottHighEnv, 0.000001));
+
+                    let ottLowGainDb = 0.5;
+                    let ottMidGainDb = 1.2;
+                    let ottHighGainDb = 2.0;
+
+                    if (ottLowDb > -15.0) ottLowGainDb -= (ottLowDb + 15.0) * 0.72;
+                    if (ottMidDb > -17.0) ottMidGainDb -= (ottMidDb + 17.0) * 0.78;
+                    if (ottHighDb > -19.0) ottHighGainDb -= (ottHighDb + 19.0) * 0.82;
+
+                    if (ottLowDb < -40.0) ottLowGainDb += Math.min(12.0, (-40.0 - ottLowDb) * 0.34);
+                    if (ottMidDb < -44.0) ottMidGainDb += Math.min(15.0, (-44.0 - ottMidDb) * 0.40);
+                    if (ottHighDb < -48.0) ottHighGainDb += Math.min(18.0, (-48.0 - ottHighDb) * 0.46);
+
+                    // Depth scales both the upward and downward compression.
+                    ottLowGainDb *= ottDepth;
+                    ottMidGainDb *= ottDepth;
+                    ottHighGainDb *= ottDepth;
+
+                    const ottLowTargetGain = Math.pow(10.0, ottLowGainDb / 20.0);
+                    const ottMidTargetGain = Math.pow(10.0, ottMidGainDb / 20.0);
+                    const ottHighTargetGain = Math.pow(10.0, ottHighGainDb / 20.0);
+
+                    ottLowGain += (ottLowTargetGain < ottLowGain ? ottGainAttack : ottGainRelease) * (ottLowTargetGain - ottLowGain);
+                    ottMidGain += (ottMidTargetGain < ottMidGain ? ottGainAttack : ottGainRelease) * (ottMidTargetGain - ottMidGain);
+                    ottHighGain += (ottHighTargetGain < ottHighGain ? ottGainAttack : ottGainRelease) * (ottHighTargetGain - ottHighGain);
+
+                    let ottWet =
+                        ottLowBand * ottLowGain
+                        + ottMidBand * ottMidGain
+                        + ottHighBand * ottHighGain;
+
+                    // Mild output drive keeps the aggressive upward stage from exploding,
+                    // while still giving OTT the dense/pushed character people expect.
+                    const ottDrive = 1.0 + ottDepth * 0.55;
+                    const ottDriven = ottWet * ottDrive;
+                    ottWet = ottDriven / (1.0 + Math.abs(ottDriven) * 0.22);
+
+                    sample = sample * (1.0 - ottDepth) + ottWet * ottDepth;`
+            }
+
             if (usesPanning) {
                 effectsSource += `
 					
@@ -15000,6 +15193,21 @@ export class Synth {
 				
 				// Avoid persistent denormal or NaN values in the delay buffers and filter history.
 				const epsilon = (1.0e-24);`
+
+            if (usesOtt) {
+                effectsSource += `
+
+                instrumentState.ottLow = Math.abs(ottLow) < epsilon ? 0.0 : ottLow;
+                instrumentState.ottLow2 = Math.abs(ottLow2) < epsilon ? 0.0 : ottLow2;
+                instrumentState.ottHigh = Math.abs(ottHigh) < epsilon ? 0.0 : ottHigh;
+                instrumentState.ottHigh2 = Math.abs(ottHigh2) < epsilon ? 0.0 : ottHigh2;
+                instrumentState.ottLowEnv = Math.abs(ottLowEnv) < epsilon ? 0.0 : ottLowEnv;
+                instrumentState.ottMidEnv = Math.abs(ottMidEnv) < epsilon ? 0.0 : ottMidEnv;
+                instrumentState.ottHighEnv = Math.abs(ottHighEnv) < epsilon ? 0.0 : ottHighEnv;
+                instrumentState.ottLowGain = ottLowGain;
+                instrumentState.ottMidGain = ottMidGain;
+                instrumentState.ottHighGain = ottHighGain;`
+            }
 
             if (usesDelays) {
                 effectsSource += `
@@ -15768,7 +15976,7 @@ export class Synth {
 
         let expression: number = +tone.expression;
         const expressionDelta: number = +tone.expressionDelta;
-        const released: boolean = tone.passedEndOfNote;
+        const released: boolean = tone.ticksSinceReleased > 0;
         const loopEnabled: boolean = zone.loopMode == 1 || (zone.loopMode == 3 && !released);
         const loopStart: number = Math.max(0, Math.min(waveLength - 2, zone.loopStart));
         const loopEnd: number = Math.max(loopStart + 1, Math.min(waveLength, zone.loopEnd));
@@ -15817,19 +16025,8 @@ export class Synth {
             );
             initialFilterInput2 = initialFilterInput1;
             initialFilterInput1 = inputSample;
-            const attackSamples: number = zone.attackSeconds * synth.samplesPerSecond;
-            const releaseSamples: number = zone.releaseSeconds * synth.samplesPerSecond;
-            const attackEnvelope: number = attackSamples > 0.0
-                ? Math.min(1.0, tone.soundFontSamplesHeld / attackSamples)
-                : 1.0;
-            const releasedSamples: number = tone.ticksSinceReleased * roundedSamplesPerTick + (sampleIndex - bufferIndex);
-            const releaseEnvelope: number = released && releaseSamples > 0.0
-                ? Math.max(0.0, 1.0 - releasedSamples / releaseSamples)
-                : 1.0;
-
-            data[sampleIndex] += sample * expression * attackEnvelope * releaseEnvelope;
+            data[sampleIndex] += sample * expression;
             expression += expressionDelta;
-            if (!released) tone.soundFontSamplesHeld++;
         }
 
         for (let voice: number = 0; voice < voiceCount; voice++) {
